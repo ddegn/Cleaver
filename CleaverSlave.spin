@@ -203,7 +203,7 @@ CON
   MIDDLE_PAN_PORT = 2000
   MIDDLE_PAN_CENTER = 1480
   MIDDLE_PAN_STARBOARD = 1000
-
+  
   #0, PORT_PAN_SERVO, PORT_TILT_SERVO, MIDDLE_PAN_SERVO, MIDDLE_TILT_SERVO
       STARBOARD_PAN_SERVO, STARBOARD_TILT_SERVO, ALL_SERVOS, PAN_SERVOS, TILT_SERVOS
       PORT_SERVOS, MIDDLE_SERVOS, STARBOARD_SERVOS
@@ -270,8 +270,20 @@ VAR
  
   long lastComTime
 
-  long addressOffsetCorrection
-
+ 
+  long pingMax[NUMBER_OF_PING_SENSORS], pingMin[NUMBER_OF_PING_SENSORS]
+  long headingAtMax[NUMBER_OF_PING_SENSORS], headingAtMin[NUMBER_OF_PING_SENSORS]
+  long previousServo[NUMBER_OF_SERVOS]
+  long laserRange, loopCount
+  long previousDistance[NUMBER_OF_SERVOS], pseudoAcceleration[NUMBER_OF_SERVOS]
+  long previousPeriod[NUMBER_OF_SERVOS], servoPatternPeriod
+  long servoPattern, previousServoPattern
+  long patternPhase
+  long segmentPeriodSet[NUMBER_OF_SERVOS], segmentPhaseSet[NUMBER_OF_SERVOS]
+  long nextSegmentSet[NUMBER_OF_SERVOS], segmentStartPtrSet[NUMBER_OF_SERVOS]
+  long segmentEndPtrSet[NUMBER_OF_SERVOS], activeServoSet[NUMBER_OF_SERVOS]
+  long maxActiveServoSetIndex
+  
   byte pingsInUse, maxPingIndex
   byte inputBuffer[BUFFER_LENGTH], outputBuffer[BUFFER_LENGTH] 
   byte inputIndex, parseIndex, outputIndex
@@ -288,7 +300,10 @@ maxPosAccel                     long 800        ' Maximum allowed positional acc
 smallChange                     long 1
 bigChange                       long 10
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
-servoPosition                   long 1500
+servoPosition                   long PORT_PAN_CENTER, PORT_TILT_HORIZONTAL
+                                long MIDDLE_PAN_CENTER, MIDDLE_TILT_HORIZONTAL
+                                long STARBOARD_PAN_CENTER, STARBOARD_TILT_HORIZONTAL
+                                
 controlFrequency                long DEFAULT_CONTROL_FREQUENCY
 halfInterval                    long DEFAULT_HALF_INTERVAL
 
@@ -308,7 +323,6 @@ OBJ
   
   Servo : "Servo32v9Shared"                             ' uses one cog
 
-  Nunchuck : "jm_nunchuk_ez_v3"
   Format : "StrFmt"             ' same formatting code used by serial object so
                                 ' so adding this doesn't cost us any RAM.
   
@@ -325,16 +339,13 @@ PUB Main
   Com.Start                                         'Start the ports    
  
   Servo.Start
-        
-  Nunchuck.Init(I2C_CLOCK, I2C_DATA)
-    
+
   longfill(@pingStack, FILL_LONG, PING_STACK_SIZE)
   Ping.Start(pingMask, pingInterval, @pingResults)
   ' Continuously trigger and read pulse widths on PING))) pins
   pingsInUse := Ping.GetPingsInUse
   maxPingIndex := pingsInUse - 1
-  addressOffsetCorrection := @addressOffsetTest - addressOffsetTest
-
+  
   if debugFlag => INTRO_DEBUG
     Master.Strs(MASTER_COM, string(11, 13, "CleaverSlave"))
       
@@ -882,6 +893,199 @@ PUB Say(messageId, value)
 
   result := Com.Rx(EMIC_COM)
   
+PUB SetServos(servosId, positionPtr) | lowestId, highestId, servoIdStep
+
+  case servosId
+    PORT_PAN_SERVO..STARBOARD_TILT_SERVO:
+      lowestId := servosId
+      highestId := servosId
+      servoIdStep := 1
+    ALL_SERVOS:
+      lowestId := 0
+      highestId := MAX_SERVO_INDEX
+      servoIdStep := 1
+    PAN_SERVOS:
+      lowestId := 0
+      highestId := MAX_SERVO_INDEX - 1
+      servoIdStep := 2
+    TILT_SERVOS:
+      lowestId := 1
+      highestId := MAX_SERVO_INDEX
+      servoIdStep := 2
+    PORT_SERVOS:
+      lowestId := PORT_PAN_SERVO
+      highestId := PORT_TILT_SERVO
+      servoIdStep := 1
+    MIDDLE_SERVOS:
+      lowestId := MIDDLE_PAN_SERVO
+      highestId := MIDDLE_TILT_SERVO
+      servoIdStep := 1
+    STARBOARD_SERVOS:
+      lowestId := STARBOARD_PAN_SERVO
+      highestId := STARBOARD_TILT_SERVO
+      servoIdStep := 1
+
+  ' ** still need to set the positions
+    
+PUB PositionServos(servosId, startPtr, endPtr, phase, period, rampType) | start, end, {
+} lowestId, highestId, servoIdStep
+
+  case servosId
+    PORT_PAN_SERVO..STARBOARD_TILT_SERVO:
+      lowestId := servosId
+      highestId := servosId
+      servoIdStep := 1
+    ALL_SERVOS:
+      lowestId := 0
+      highestId := MAX_SERVO_INDEX
+      servoIdStep := 1
+    PAN_SERVOS:
+      lowestId := 0
+      highestId := MAX_SERVO_INDEX - 1
+      servoIdStep := 2
+    TILT_SERVOS:
+      lowestId := 1
+      highestId := MAX_SERVO_INDEX
+      servoIdStep := 2
+    PORT_SERVOS:
+      lowestId := PORT_PAN_SERVO
+      highestId := PORT_TILT_SERVO
+      servoIdStep := 1
+    MIDDLE_SERVOS:
+      lowestId := MIDDLE_PAN_SERVO
+      highestId := MIDDLE_TILT_SERVO
+      servoIdStep := 1
+    STARBOARD_SERVOS:
+      lowestId := STARBOARD_PAN_SERVO
+      highestId := STARBOARD_TILT_SERVO
+      servoIdStep := 1
+
+  if phase == 0 or phase == period
+    'SendServos(lowestId, highestId, servoIdStep, startPtr)
+  elseif phase == (period + 1) / 2 
+    'SendServos(lowestId, highestId, servoIdStep, endPtr)
+  else  
+    repeat servosId from lowestId to highestId step servoIdStep
+      result := PositionServo(servosId, long[startPtr][servosId], long[endPtr][servosId], phase, period, rampType)
+      'SendServo(servosId, result)
+      
+PRI PositionServo(servoId, start, end, phase, period, rampType) : position | halfPeriod, {
+} quarterPeriod, threeQuartersPeriod, halfway, distance, halfDistance, roundTripDistance
+'' If period had the value of 2 (min allowed)
+'' then when phase equals zero the position would be
+'' the start position (as it will whenever phase is zero)
+'' The position will always be end when phase equals
+'' half the period.
+
+  distance := end - start
+  
+  ' think about making some of these global so they don't need to be changed each call
+  halfPeriod := DivideWithRound(period, 2)
+  quarterPeriod := DivideWithRound(period, 4)
+  threeQuartersPeriod := DivideWithRound(period * 3, 4)
+  roundTripDistance := distance * 2
+  halfDistance := DivideWithRound(distance, 2)
+  'pseudoHalfDistance := distance * PSEUDO_MULTIPLIER / 2
+  halfway := start + halfDistance
+
+  if phase == 0 or phase == period
+    position := start
+  elseif phase == quarterPeriod or phase == threeQuartersPeriod
+    position := halfway
+  elseif phase == halfPeriod
+    position := end
+  else
+    'period++
+    'position := start
+    'position += (end - start) * phase / period 
+    case rampType
+      LINEAR_RAMP:
+        if phase < period / 2
+          position += start + (roundTripDistance * phase / period)
+        else ' phase > period / 2
+          position += end - (roundTripDistance * phase / period)  
+      ACCELERATION_RAMP:
+        if distance <> previousDistance[servoId] or {
+          } period <> previousPeriod[servoId] 
+          'pseudoAcceleration[servoId] := pseudoHalfDistance / (quarterPeriod * quarterPeriod)
+          'equation below should be the same as the one above with less rounding error
+          pseudoAcceleration[servoId] := distance * PSEUDO_MULTIPLIER * 8 / (period * period)
+          previousDistance[servoId] := distance
+          previousPeriod[servoId] := period
+        if phase < quarterPeriod
+          position := SpeedUp(servoId, start, phase)
+        elseif phase < halfPeriod
+          position := SlowDown(servoId, end, phase, halfPeriod)
+        elseif phase < threeQuartersPeriod
+          position := SpeedBackUp(servoId, end, phase, halfPeriod)
+        else
+          SlowBackDown(servoId, start, phase, period)
+
+PRI SpeedUp(servoId, start, phase)
+' y = 1/2 a t^2
+' a = 2*y / t*t
+' distance = 2*y
+' formula should really use quarterPeriod and halfDistance but
+' we'll use period, distance and scale result
+
+  result := start + (pseudoAcceleration[servoId] * phase * phase / PSEUDO_MULTIPLIER) 
+  
+PRI SlowDown(servoId, end, phase, halfPeriod)
+
+  phase := halfPeriod - phase
+  result := end - (pseudoAcceleration[servoId] * phase * phase / PSEUDO_MULTIPLIER) 
+  
+PRI SpeedBackUp(servoId, end, phase, halfPeriod)
+
+  phase := phase - halfPeriod
+  result := end - (pseudoAcceleration[servoId] * phase * phase / PSEUDO_MULTIPLIER) 
+  
+PRI SlowBackDown(servoId, start, phase, period)
+
+  phase := period - phase
+  result := start + (pseudoAcceleration[servoId] * phase * phase / PSEUDO_MULTIPLIER) 
+
+PUB GetLaserRange | inputcharacter
+
+  dira[SR02_TRIGGER_PIN] := 1
+  Com.Str(DEBUG_COM, string(11, 13, "GetLaserRange = "))
+  'Com.Tx(SR02_COM, "D")
+  dira[SR02_TRIGGER_PIN] := 0
+
+  repeat
+    'Com.Str(DEBUG_COM, string(11, 13, "Before RxTime Call.")) 
+    inputcharacter := Com.RxTime(SR02_COM, 100)
+    'inputcharacter := Com.RxCheck(SR02_COM)
+    'Com.Str(DEBUG_COM, string(11, 13, "After RxTime Call.")) 
+    SafeTx(DEBUG_COM, inputcharacter)
+    'Com.Str(DEBUG_COM, string(11, 13, "After SafeTx Call.")) 
+    case inputcharacter
+      "0".."9":
+        result := (result * 10) + (inputcharacter - "0") 
+  until inputcharacter == 13 or inputcharacter == -1
+  'Com.Str(DEBUG_COM, string(11, 13, "laserRange = "))
+  'Com.Dec(DEBUG_COM, result)
+
+PUB GetPing(numberOfSensors, pointer)
+'' Is this method really needed?
+'' Yes, it will eventually do more.
+  Com.Str(DEBUG_COM, string(11, 13, "GetPing("))
+  Com.Dec(DEBUG_COM, numberOfSensors)
+  Com.Str(DEBUG_COM, string(", $"))
+  Com.Hex(DEBUG_COM, pointer, 4)
+  Com.Tx(DEBUG_COM, ")")
+  ' ** currently this code is useless
+  'Com.Str(DEBUG_COM, string(11, 13, "pingNew = "))
+  'Com.Dec(DEBUG_COM, pingNew[0])
+  'Com.Str(DEBUG_COM, string(", "))
+  'Com.Dec(DEBUG_COM, pingNew[1])
+   
+
+PUB DivideWithRound(numerator, denominator)
+
+  numerator += denominator
+  result := numerator / denominator
+
 DAT
 
 prompt                          byte CR, 0

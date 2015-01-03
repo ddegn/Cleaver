@@ -104,6 +104,8 @@ CON
   US            = $1F           ' Unit Separator
   DEL           = $7F           ' Delete
 
+  QUOTE = 34 ' $22
+  
   ' EEPROM constants
   I2C_ACK       = 0
   I2C_NACK      = 1
@@ -127,6 +129,9 @@ CON
   MIN_INPUT_SPEED = -MAX_INPUT_SPEED
 
   MAX_ARC_SPEED = 100
+
+  MAX_RC_SPEED = 110
+  
   SCALED_MAX_ARC_SPEED = SCALED_MULTIPLIER * MAX_ARC_SPEED
   '' The motors generally can not produce speeds matching "MAX_INPUT_SPEED".
   '' This can result is deformed arcs as the "fastMotor" does
@@ -200,6 +205,16 @@ CON
   
   DEFAULT_DEBUG_INTERVAL = 250 '2_000 '
 
+  ACKNOWLEDGE_SONG = 8
+  ERROR_SONG = 9 '8 '1 '11
+
+  BUFFER_SIZE = 64
+
+  DEFAULT_TEMPO = 1500
+
+  DEFAULT_PAUSE = 20 * MILLISECOND
+  DEFAULT_REQUEST_TIMEOUT = 3_000
+  
 CON '' Debug Levels
 '' Use these constants to indicate which sections of code should be debugged.
 '' If the value of the "debugFlag" variable is larger than the value assigned to these
@@ -355,6 +370,65 @@ CON
 
   #0, DEBUG_COM, EMIC_COM, SR02_COM', XBEE_COM
 
+  ' controlMode enumeration
+  #0, ROAM_MODE, RC_POWER_MODE, RC_SPEED_MODE
+
+  ' sensorMode
+  #0, PRIORITY_TO_SENSOR, IGNORE_DANGER_SENSOR
+  
+CON
+
+  CENTER_STICK_NUNCHUCK_X = 129
+  CENTER_STICK_NUNCHUCK_Y = 127
+  DEADZONE_NUNCHUCK_STICK = 8
+  CENTER_NUNCHUCK_X_MIN = CENTER_STICK_NUNCHUCK_X - DEADZONE_NUNCHUCK_STICK
+  CENTER_NUNCHUCK_X_MAX = CENTER_STICK_NUNCHUCK_X + DEADZONE_NUNCHUCK_STICK
+  CENTER_NUNCHUCK_Y_MIN = CENTER_STICK_NUNCHUCK_Y - DEADZONE_NUNCHUCK_STICK
+  CENTER_NUNCHUCK_Y_MAX = CENTER_STICK_NUNCHUCK_Y + DEADZONE_NUNCHUCK_STICK
+  NUNCHUCK_X_RANGE_RIGHT = 255 - CENTER_NUNCHUCK_X_MAX + 1
+  NUNCHUCK_X_RANGE_LEFT = CENTER_NUNCHUCK_X_MIN + 1
+  NUNCHUCK_Y_RANGE_FORWARD = 255 - CENTER_NUNCHUCK_Y_MAX + 1
+  NUNCHUCK_Y_RANGE_REVERSE = CENTER_NUNCHUCK_Y_MIN + 1
+  NUNCHUCK_X_RANGE_R_HALF = NUNCHUCK_X_RANGE_RIGHT / 2
+  NUNCHUCK_X_RANGE_L_HALF = NUNCHUCK_X_RANGE_LEFT / 2
+  NUNCHUCK_Y_RANGE_F_HALF = NUNCHUCK_Y_RANGE_FORWARD / 2
+  NUNCHUCK_Y_RANGE_R_HALF = NUNCHUCK_Y_RANGE_REVERSE / 2
+  
+  NUNCHUCK_ACC_MIN_X = 259 'port side down
+  NUNCHUCK_ACC_MAX_X = 752 'starboard side down
+  NUNCHUCK_ACC_MID_X = (NUNCHUCK_ACC_MIN_X + NUNCHUCK_ACC_MAX_X) / 2 'top side up
+  NUNCHUCK_ACC_MIN_Y = 275 'front up
+  NUNCHUCK_ACC_MAX_Y = 763 'front down
+  NUNCHUCK_ACC_MID_Y = (NUNCHUCK_ACC_MIN_X + NUNCHUCK_ACC_MAX_X) / 2 'top side up
+  NUNCHUCK_ACC_MIN_Z = 256 'top side down
+  NUNCHUCK_ACC_MAX_Z = 735 'top side up
+  NUNCHUCK_ACC_MID_Z = (NUNCHUCK_ACC_MIN_Z + NUNCHUCK_ACC_MAX_Z) / 2 'top side pointing horizontal
+  NUNCHUCK_ACC_RANGE_Z = NUNCHUCK_ACC_MID_Z + NUNCHUCK_ACC_MIN_Z
+  NUNCHUCK_ACC_RANGE_Y = NUNCHUCK_ACC_MID_Y + NUNCHUCK_ACC_MIN_Y
+  NUNCHUCK_ACC_RANGE_X = NUNCHUCK_ACC_MID_X + NUNCHUCK_ACC_MIN_X
+  DEADZONE_NUNCHUCK_ACC_Z = NUNCHUCK_ACC_RANGE_Z / 16
+  NUNCHUCK_VERTICAL_MIN_Z = NUNCHUCK_ACC_MID_Z - DEADZONE_NUNCHUCK_ACC_Z
+  NUNCHUCK_VERTICAL_MAX_Z = NUNCHUCK_ACC_MID_Z + DEADZONE_NUNCHUCK_ACC_Z
+  DEADZONE_NUNCHUCK_ACC_Y = NUNCHUCK_ACC_RANGE_Y / 16
+  NUNCHUCK_VERTICAL_MIN_Y = NUNCHUCK_ACC_MID_Y - DEADZONE_NUNCHUCK_ACC_Y
+  NUNCHUCK_VERTICAL_MAX_Y = NUNCHUCK_ACC_MID_Y + DEADZONE_NUNCHUCK_ACC_Y
+  DEADZONE_NUNCHUCK_ACC_X = NUNCHUCK_ACC_RANGE_X / 16
+  NUNCHUCK_VERTICAL_MIN_X = NUNCHUCK_ACC_MID_X - DEADZONE_NUNCHUCK_ACC_X
+  NUNCHUCK_VERTICAL_MAX_X = NUNCHUCK_ACC_MID_X + DEADZONE_NUNCHUCK_ACC_X
+  NUNCHUCK_UP_THRESHOLD = NUNCHUCK_ACC_MIN_Y + (NUNCHUCK_ACC_RANGE_Y / 10)
+  NUNCHUCK_DOWN_THRESHOLD = NUNCHUCK_ACC_MAX_Y - (NUNCHUCK_ACC_RANGE_Y / 10)  
+
+  MAX_STICK_NUNCHUCK = $FF
+  MAX_ACC_NUNCHUCK = 1_023
+
+  ABS_MAX_HEIGHT = NUNCHUCK_ACC_RANGE_Y
+  F_ABS_MAX_HEIGHT = float(ABS_MAX_HEIGHT)
+  
+  NUNCHUCK_BUTTON_Z = 1
+  NUNCHUCK_BUTTON_C = 2
+
+  #0, X_ACCEL, Y_ACCEL, Z_ACCEL
+  
 CON '' Cog Usage
 {{
   The objects, "Com", "Ping", "Servo", "Encoder" and "AltCom" each start
@@ -407,12 +481,22 @@ VAR
   long stillCnt[2] ' Number of iterations in a row that the motor hasn't moved
   long addressOffsetCorrection, activePositionAcceleration[2]
 
+  long joyX, joyY
+  long nunchuckAcceleration[3]
+  long nuchuckIdPtr
+  
   byte positionErrorFlag[2]
  
   byte pingsInUse, maxPingIndex
   byte inputBuffer[BUFFER_LENGTH], outputBuffer[BUFFER_LENGTH] 
   byte inputIndex, parseIndex, outputIndex
   byte midReachedSetFlag[2]
+
+  byte sdFlag
+  byte previousControlMode, controlMode, sensorMode
+  byte rightX, rightY, nunchuckButton, previousButton
+  byte badDataFlag, nunchuckReadyFlag
+  byte tempString[64]
        
 DAT '' variables which my have non-zero initial values 
 
@@ -434,7 +518,7 @@ servoPosition                   long 1500
 controlFrequency                long DEFAULT_CONTROL_FREQUENCY
 halfInterval                    long DEFAULT_HALF_INTERVAL
 directionFlag                   long 1[2], 1[10]
-
+pauseTime                       long DEFAULT_PAUSE
 demoFlag                        byte 0 ' set to 255 or -1 to continuously run demo
                                        ' other non-zero values will instuct the 
                                        ' program the number of times it should execute
@@ -448,6 +532,7 @@ pingPauseFlag                   byte 0
 controlCom                      byte DEFAULT_CONTROL_COM                        
 mode                            byte 0                  ' Current mode of the control system
 verbose                         byte true '      ' Verbosity level (Currently nonzero = verbose)
+pauseForRxFlag                  byte 0
 
 OBJ                             
                                 
@@ -497,13 +582,16 @@ PUB Main
   activeParTxtPtr := @targetPowerRTxt
 
   ExecuteStoredCommand(@introSong)
+  waitcnt(clkfreq + cnt)
   Say(Header#INTRO_EMIC)
   MainLoop
 
 PUB MainLoop | rxcheck, lastDebugTime
     
   lastComTime := cnt
-  repeat                                                ' Main loop (repeats forever) 
+  repeat
+    CheckNunchuck
+                                                
     repeat           ' Read a byte from the command UART
       if demoFlag
         ScriptedProgram
@@ -624,6 +712,32 @@ PUB MainLoop | rxcheck, lastDebugTime
             inputIndex--
             waitcnt(clkfreq / 2 + cnt)
                       
+PUB CheckNunchuck
+
+  if controlMode <> previousControlMode 
+    Com.Str(DEBUG_COM, string(11, 13, "*** new controlMode ***"))
+      {Com.Dec(DEBUG_COM, controlMode)
+      Com.Str(DEBUG_COM, string(" = ")) 
+      Com.Str(DEBUG_COM, FindString(@controlModeTxt, controlMode))}
+    previousControlMode := controlMode
+    {previousHeading := heading
+    size := \Request(HEAD, @heading, true)
+    if size > 1
+      Com.Str(DEBUG_COM, string(13, "Request call appears to have aborted, error string = "))
+      SafeDebug(DEBUG_COM, size, strsize(size))
+      }
+    Com.Str(DEBUG_COM, string(11, 13, "a joy = "))
+    Com.Dec(DEBUG_COM, joyX)
+    Com.Str(DEBUG_COM, string(", "))
+    Com.Dec(DEBUG_COM, joyY)
+  
+    GetNunchuckData
+    Com.Str(DEBUG_COM, string(11, 13, "b joy = "))
+    Com.Dec(DEBUG_COM, joyX)
+    Com.Str(DEBUG_COM, string(", "))
+    Com.Dec(DEBUG_COM, joyY)
+
+
 PRI UpdateActive(changeAmount)
 
   if inputIndex == 1
@@ -1817,6 +1931,163 @@ PUB Say(messageId)
   Slave.Dec(0, messageId)
   Slave.Tx(0, 13)
   
+PUB GetSharpDistance(firstChannel, lastChannel, avePtr, rawPtr)
+'' The ADC values should be read prior to calling this method.
+
+  Com.Str(DEBUG_COM, string(11, 13, "GetSharpDistance("))
+  Com.Dec(DEBUG_COM, firstChannel)
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, lastChannel)
+  Com.Str(DEBUG_COM, string(", $"))
+  Com.Hex(DEBUG_COM, avePtr, 4)
+  Com.Str(DEBUG_COM, string(", $"))
+  Com.Hex(DEBUG_COM, rawPtr, 4)
+  Com.Tx(DEBUG_COM, ")")
+  
+  repeat result from firstChannel to lastChannel
+    long[avePtr][result] := (long[rawPtr][result] + long[rawPtr][result + NUMBER_OF_UNIQUE_ADC]) / 2
+    
+PUB GetNunchuckData | localMax, localParameter[2], pointer
+'' Called by debug cog
+'' Nunchuck's coordinate system is different from robot's.
+'' 
+  if nunchuckReadyFlag == 0
+    CheckForNunchuck
+    if nunchuckReadyFlag == 0
+      return
+      
+  Com.Str(DEBUG_COM, string(11, 13, "Before Nunchuck.Scan"))
+  Nunchuck.Scan
+  Com.Str(DEBUG_COM, string(11, 13, "After Nunchuck.Scan"))
+  rightX := Nunchuck.joyx
+  rightY := Nunchuck.joyy
+  nunchuckAcceleration[0] := Nunchuck.accx
+  nunchuckAcceleration[1] := Nunchuck.accy
+  nunchuckAcceleration[2] := Nunchuck.accz
+  nunchuckButton := Nunchuck.buttons
+  
+
+  Com.Str(DEBUG_COM, string(11, 13, "Nunchuck = "))
+  Com.Dec(DEBUG_COM, rightX)
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, rightY)
+  Com.Str(DEBUG_COM, string(" & "))
+  Com.Dec(DEBUG_COM, nunchuckAcceleration[0])
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, nunchuckAcceleration[1])
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, nunchuckAcceleration[2])
+  Com.Str(DEBUG_COM, string(" : ButtonsZC = "))
+  Com.Dec(DEBUG_COM, nunchuckButton)
+ 
+
+  case nunchuckButton
+    NUNCHUCK_BUTTON_Z:
+      if CheckPointedUp
+        controlMode := RC_POWER_MODE
+      elseif CheckPointedDown
+        controlMode := ROAM_MODE
+      else
+        result := 3
+        'SendCommand(SONG, 1, @result, true)
+    NUNCHUCK_BUTTON_C:
+      targetSpeed[LEFT_MOTOR] := 0
+      targetSpeed[RIGHT_MOTOR] := 0
+        
+    'NUNCHUCK_BUTTON_Z + NUNCHUCK_BUTTON_C:
+            
+  badDataFlag := 0
+
+  if controlMode == RC_SPEED_MODE
+    localMax :=  MAX_RC_SPEED
+    pointer := @targetSpeed
+  else' if controlMode == RC_POWER_MODE
+    localMax :=  MAX_POWER
+    pointer := @targetPower
+
+  case rightX
+    0..CENTER_NUNCHUCK_X_MIN - 1:
+      joyX := rightX - CENTER_NUNCHUCK_X_MIN
+      joyX := ((joyX * localMax) + NUNCHUCK_X_RANGE_L_HALF) / NUNCHUCK_X_RANGE_LEFT 
+    CENTER_NUNCHUCK_X_MIN..CENTER_NUNCHUCK_X_MAX:
+      joyX := 0
+    CENTER_NUNCHUCK_X_MAX + 1..MAX_STICK_NUNCHUCK:
+      joyX := rightX - CENTER_NUNCHUCK_X_MAX
+      joyX := ((joyX * localMax) + NUNCHUCK_X_RANGE_R_HALF) / NUNCHUCK_X_RANGE_RIGHT
+  case rightY
+    0..CENTER_NUNCHUCK_Y_MIN - 1:
+      joyY := rightY - CENTER_NUNCHUCK_Y_MIN
+      joyY := ((joyY * localMax) + NUNCHUCK_Y_RANGE_R_HALF) / NUNCHUCK_Y_RANGE_REVERSE
+    CENTER_NUNCHUCK_Y_MIN..CENTER_NUNCHUCK_Y_MAX:
+      joyY := 0
+    CENTER_NUNCHUCK_Y_MAX + 1..MAX_STICK_NUNCHUCK:
+      joyY := rightY - CENTER_NUNCHUCK_Y_MAX
+      joyY := ((joyY * localMax) + NUNCHUCK_Y_RANGE_F_HALF) / NUNCHUCK_Y_RANGE_FORWARD
+      
+  previousButton := nunchuckButton
+  ' *** speed isn't computed yet 
+  'targetSpeed[LEFT_MOTOR] := -MAX_RC_SPEED #> joyY + joyX <# MAX_RC_SPEED
+  'targetSpeed[RIGHT_MOTOR] := -MAX_RC_SPEED #> joyY - joyX <# MAX_RC_SPEED
+  'targetSpeed[LEFT_MOTOR] := joyY + joyX
+  'targetSpeed[RIGHT_MOTOR] := joyY - joyX
+  localParameter[LEFT_MOTOR] := joyY + joyX
+  localParameter[RIGHT_MOTOR] := joyY - joyX
+    
+ 
+  Com.Str(DEBUG_COM, string(11, 13, "joy = "))
+  Com.Dec(DEBUG_COM, joyX)
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, joyY)
+
+  Com.Str(DEBUG_COM, string(", localParameter = "))
+  Com.Dec(DEBUG_COM, localParameter[LEFT_MOTOR])
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, localParameter[RIGHT_MOTOR])
+  if ||localParameter[LEFT_MOTOR] > localMax or ||localParameter[RIGHT_MOTOR] > localMax
+    localParameter[LEFT_MOTOR] := -localMax #> localParameter[LEFT_MOTOR] <# localMax
+    localParameter[RIGHT_MOTOR] := -localMax #> localParameter[RIGHT_MOTOR] <# localMax
+    Com.Str(DEBUG_COM, string(", limited = "))
+    Com.Dec(DEBUG_COM, localParameter[LEFT_MOTOR])
+    Com.Str(DEBUG_COM, string(", "))
+    Com.Dec(DEBUG_COM, localParameter[RIGHT_MOTOR])
+    
+    'result := pauseForRxFlag
+    'pauseForRxFlag := 1
+    PauseForRx
+    'pauseForRxFlag := result
+    
+  longmove(pointer, @localParameter, 2)
+  
+PUB CheckForNunchuck
+
+  Nunchuck.Init(I2C_CLOCK, I2C_DATA)
+  Com.Str(DEBUG_COM, string("Nunchuck ID = ", QUOTE))   
+  SafeDebug(DEBUG_COM, nuchuckIdPtr, 4)
+  Com.Tx(DEBUG_COM, QUOTE) 
+  if long[nuchuckIdPtr] <> -1
+    nunchuckReadyFlag := 1
+  
+PUB CheckPointedUp
+
+  if nunchuckAcceleration[Y_ACCEL] < NUNCHUCK_UP_THRESHOLD
+    result := true
+
+PUB CheckPointedDown
+
+  if nunchuckAcceleration[Y_ACCEL] > NUNCHUCK_DOWN_THRESHOLD
+    result := true
+  
+PUB PauseForRx
+
+  if pauseForRxFlag
+    Com.Tx(DEBUG_COM, 11)
+    Com.Tx(DEBUG_COM, 13)
+    Com.Str(DEBUG_COM, @pressToTxt)
+    Say(@pressToTxt)
+    Com.Rx(DEBUG_COM)
+  else
+    waitcnt(pauseTime + cnt)
+
 DAT
 
 prompt                          byte CR, 0
@@ -1844,6 +2115,9 @@ kpControlTypeTxt                byte "TARGET_DEPENDENT", 0
                                 
 serialTxt                       byte "SLAVE_SERIAL", 0
                                 byte "USB_SERIAL", 0
+
+pressToTxt                      byte "Any key to continue.", 0
+
   
 ' Active Parameter Text
 maxPowAccelTxt                  byte "maxPowAccel", 0 
