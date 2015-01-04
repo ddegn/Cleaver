@@ -52,7 +52,13 @@ CON
   I2C_CLOCK = 9
   I2C_DATA = 10
 
-
+  LED_PIN = 8
+  LEDS_IN_USE = 10
+  MAX_LED_INDEX = LEDS_IN_USE
+  DEFAULT_BRIGHTNESS = $3F
+  #0, FROM_INPUT_LED, DISPLAY_POSITION_ERROR_LED
+  DEFAULT_LED_MODE = DISPLAY_POSITION_ERROR_LED 'FROM_INPUT_LED '
+  
   ' Master GPIO mask (Only high pins can be set as outputs)
   OUTPUTABLE = Header#OUTPUTABLE
   PINGABLE = Header#PINGABLE
@@ -63,8 +69,6 @@ CON
   '**141220e MAX_PING = Ping#MAX_PING
   INITIAL_PING = Header#INITIAL_PING
   INITIAL_GPIO = Header#INITIAL_GPIO
-
-  
   
   'PROCESSRATE = _CLKFREQ / 16_000
   'TIMEOUT       = 10
@@ -378,6 +382,8 @@ CON
   
 CON
 
+  VALID_NUNCHUCK_ID = $04C4B400
+  
   CENTER_STICK_NUNCHUCK_X = 129
   CENTER_STICK_NUNCHUCK_Y = 127
   DEADZONE_NUNCHUCK_STICK = 8
@@ -429,16 +435,39 @@ CON
 
   #0, X_ACCEL, Y_ACCEL, Z_ACCEL
   
+CON ' colors
+
+  '             RR GG BB
+  OFF        = $00_00_00
+  BLACK      = $00_00_00
+  RED        = $FF_00_00
+  GREEN      = $00_FF_00
+  BLUE       = $00_00_FF
+  WHITE      = $FF_FF_FF
+  CYAN       = $00_FF_FF
+  MAGENTA    = $FF_00_FF
+  YELLOW     = $FF_FF_00
+  CHARTREUSE = $7F_FF_00
+  ORANGE     = $FF_60_00
+  AQUAMARINE = $7F_FF_D4
+  PINK       = $FF_5F_5F
+  TURQUOISE  = $3F_E0_C0
+  REALWHITE  = $C8_FF_FF
+  INDIGO     = $3F_00_7F
+  VIOLET     = $BF_7F_BF
+  MAROON     = $32_00_10
+  BROWN      = $0E_06_00
+  CRIMSON    = $DC_28_3C
+  PURPLE     = $8C_00_FF
+
+  
 CON '' Cog Usage
 {{
-  The objects, "Com", "Ping", "Servo", "Encoder" and "AltCom" each start
+  The objects, "Header", "Encoders", "Slave", "Com", "Music" and "Led" each start
   their own cog.
   
-  This top object uses two cogs bringing the total of cogs used to 7.
+  This top object uses two cogs bringing the total of cogs used to 8.
   Depending on the motor controller used.
-  
-  The object "Music" is not presently active and each require
-  a cog to use.
  
 }}
 VAR
@@ -484,6 +513,7 @@ VAR
   long joyX, joyY
   long nunchuckAcceleration[3]
   long nuchuckIdPtr
+  long fullBrightnessArray[LEDS_IN_USE]
   
   byte positionErrorFlag[2]
  
@@ -495,7 +525,7 @@ VAR
   byte sdFlag
   byte previousControlMode, controlMode, sensorMode
   byte rightX, rightY, nunchuckButton, previousButton
-  byte badDataFlag, nunchuckReadyFlag
+  byte badDataFlag, nunchuckReadyFlag, nunchuckReceiverConnectedFlag
   byte tempString[64]
        
 DAT '' variables which my have non-zero initial values 
@@ -512,19 +542,21 @@ kIntegralDenominator            long Header#DEFAULT_INTEGRAL_DENOMINATOR
 tempo                           long 1500
 smallChange                     long 1
 bigChange                       long 10
-killSwitchTimer                 long 1000 * MILLISECOND ' default Eddie delay. Set to 0 to turn off.
+killSwitchTimer                 long 0 '1000 * MILLISECOND ' default Eddie delay. Set to 0 to turn off.
 debugInterval                   long DEFAULT_DEBUG_INTERVAL * MILLISECOND                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
-servoPosition                   long 1500
+
 controlFrequency                long DEFAULT_CONTROL_FREQUENCY
 halfInterval                    long DEFAULT_HALF_INTERVAL
 directionFlag                   long 1[2], 1[10]
 pauseTime                       long DEFAULT_PAUSE
+direction                       long 1[2] 
+
 demoFlag                        byte 0 ' set to 255 or -1 to continuously run demo
                                        ' other non-zero values will instuct the 
                                        ' program the number of times it should execute
                                        ' the method "ScriptedProgram".
                                        
-debugFlag                       byte 0 ' FULL_DEBUG
+debugFlag                       byte FULL_DEBUG
 
 volume                          byte 30
 pingPauseFlag                   byte 0
@@ -533,10 +565,12 @@ controlCom                      byte DEFAULT_CONTROL_COM
 mode                            byte 0                  ' Current mode of the control system
 verbose                         byte true '      ' Verbosity level (Currently nonzero = verbose)
 pauseForRxFlag                  byte 0
+brightness                      byte DEFAULT_BRIGHTNESS
+ledMode                         byte DEFAULT_LED_MODE
 
 OBJ                             
                                 
-  Header : "HeaderCleaver"           ' uses one cog 
+  Header : "HeaderCleaver"                              ' uses one cog 
    
   Encoders : "Quadrature_Encoder"                       ' uses one cog
   Slave : "Serial4PortLocks"                            ' uses one cog
@@ -544,15 +578,21 @@ OBJ
   Com : "Serial4LocksA"                                 ' uses one cog
   Music : "s2_music"                                    ' uses one cog
   Nunchuck : "jm_nunchuk_ez_v3"
+  Led : "jm_ws2812"                                     ' uses one cog
+                                                      
   Adc : "ActivityBoardAdc"             ' 4-channel 12-bits
   Format : "StrFmt"             ' same formatting code used by serial object so
                                 ' so adding this doesn't cost us any RAM.
   
 PUB Main 
 
+  controlMode := RC_SPEED_MODE
+  mode := POWER
+  longfill(@activePositionAcceleration, maxPosAccel, 2)
+  
   Slave.Init
-  Slave.AddPort(0, Header#SLAVE_RX, Header#SLAVE_TX, -1, -1, 0, Header#BAUDMODE, {
-  } Header#SLAVE_BAUD)
+  Slave.AddPort(0, Header#PROP_TO_PROP_RX, Header#PROP_TO_PROP_TX, -1, -1, 0, Header#BAUDMODE, {
+  } Header#PROP_TO_PROP_BAUD)
   Slave.Start                                             'Start the ports
  
   Com.Init
@@ -560,7 +600,8 @@ PUB Main
   } Header#MASTER_USB_BAUD)
   Com.Start                                         'Start the ports    
  
-  Adc.Init(Header#ADC_CS, Header#ADC_SCL, Header#ADC_DI, Header#ADC_DO)       
+  Adc.Init(Header#ADC_CS, Header#ADC_SCL, Header#ADC_DI, Header#ADC_DO)
+        
   Nunchuck.Init(I2C_CLOCK, I2C_DATA)
 
   addressOffsetCorrection := @addressOffsetTest - addressOffsetTest
@@ -568,15 +609,18 @@ PUB Main
   Music.SetVolume(volume)
   longfill(@stack, FILL_LONG, MOTOR_CONTROL_STACK_SIZE)
   result := cognew(PDLoop, @stack)                      ' Run the position controller in another core  
+  Led.start(LED_PIN, LEDS_IN_USE)
 
+  longmove(@fullBrightnessArray, @rainbow, LEDS_IN_USE)
+  AdjustAndSet(@fullBrightnessArray, brightness, LEDS_IN_USE)
   if debugFlag => INTRO_DEBUG
-    Com.Strs(0, string(11, 13, "Cleaver"))
+    Com.Str(0, string(11, 13, "Cleaver"))
      
     Com.Tx(0, 7) ' Bell sounds in terminal to catch reset issues
     waitcnt(clkfreq / 4 + cnt)
     Com.Tx(0, 7)
     waitcnt(clkfreq / 4 + cnt)
-    Com.Txe(0, 7)
+    Com.Tx(0, 7)
     
   activeParameter := @targetPower[RIGHT_MOTOR]
   activeParTxtPtr := @targetPowerRTxt
@@ -584,35 +628,49 @@ PUB Main
   ExecuteStoredCommand(@introSong)
   waitcnt(clkfreq + cnt)
   Say(Header#INTRO_EMIC)
+
+  mode := POWER                                   ' Stop PDIteration from modifying mid-positions 
+  InterpolateMidVariables 
+  
+  targetSpeed[LEFT_MOTOR] := 0          
+  targetSpeed[RIGHT_MOTOR] := 0
+
+  longfill(@stillCnt, 0, 2)
+  mode := SPEED
+
+    
   MainLoop
 
 PUB MainLoop | rxcheck, lastDebugTime
     
   lastComTime := cnt
   repeat
-    CheckNunchuck
+    
                                                 
     repeat           ' Read a byte from the command UART
+    
       if demoFlag
         ScriptedProgram
         if demoFlag <> $FF
           demoFlag-- 
-      Slave.Lock
+      CheckNunchuck
+
+      'Slave.Lock
       rxcheck := Slave.RxCheck(0)
-      Slave.E ' clear lock 
+      'Slave.E ' clear lock 
       
    
       if rxcheck <> -1
         controlCom := SLAVE_SERIAL '*** think about turning this off after use
       'else
-      {Com.Lock
+      {'Com.Lock
       rxcheck := Com.RxCheck(0)
-      Com.E
+      'Com.E
       if rxcheck <> -1
         'if debugFlag => PROP_CHARACTER_DEBUG
-        '  Com.Strs(0, string(11, 13, "From USB:", 34))
+        '  Com.Str(0, string(11, 13, "From USB:", 34))
         '  Com.Tx(0, rxcheck)
-        '  Com.Txe(0, 34)  
+        '  Com.Tx(0, 34)  
         controlCom := USB_SERIAL
       }        
       
@@ -627,7 +685,7 @@ PUB MainLoop | rxcheck, lastDebugTime
           Header.SetMotorPower(0, 0)
           Header.SetMotorPower(1, 0)
           if debugFlag => KILL_SWITCH_DEBUG
-            Com.Strse(0, string(13, "Motors Stopped"))
+            Com.Str(0, string(13, "Motors Stopped"))
           waitcnt(constant(_clkfreq / CONTROL_FREQUENCY) + cnt)
           targetPower[LEFT_MOTOR] := 0
           targetPower[RIGHT_MOTOR] := 0
@@ -663,8 +721,8 @@ PUB MainLoop | rxcheck, lastDebugTime
         
         NUL :                                           ' End command in checksum mode:
           if debugFlag => INPUT_WARNINGS_DEBUG
-            Com.Strs(0, string(11, 13, 7, "Error, NUL character received.", 7))
-            Com.Stre(0, Error)
+            Com.Str(0, string(11, 13, 7, "Error, NUL character received.", 7))
+            Com.Str(0, Error)
             waitcnt(clkfreq * 2 + cnt)
 
           {if inputIndex > 1                             '   Only parse buffer if it has content
@@ -706,9 +764,9 @@ PUB MainLoop | rxcheck, lastDebugTime
            
         SOH..BEL, LF..FF, SO..US, 127..255 :            ' Ignore invalid characters
           if debugFlag => INPUT_WARNINGS_DEBUG
-            Com.Strs(0, string(11, 13, 7, "Invalid Character Error = <$"))
+            Com.Str(0, string(11, 13, 7, "Invalid Character Error = <$"))
             Com.Hex(0, inputBuffer[inputIndex - 1], 2)
-            Com.Txe(0, ">")
+            Com.Tx(0, ">")
             inputIndex--
             waitcnt(clkfreq / 2 + cnt)
                       
@@ -726,16 +784,16 @@ PUB CheckNunchuck
       Com.Str(DEBUG_COM, string(13, "Request call appears to have aborted, error string = "))
       SafeDebug(DEBUG_COM, size, strsize(size))
       }
-    Com.Str(DEBUG_COM, string(11, 13, "a joy = "))
-    Com.Dec(DEBUG_COM, joyX)
-    Com.Str(DEBUG_COM, string(", "))
-    Com.Dec(DEBUG_COM, joyY)
-  
-    GetNunchuckData
-    Com.Str(DEBUG_COM, string(11, 13, "b joy = "))
-    Com.Dec(DEBUG_COM, joyX)
-    Com.Str(DEBUG_COM, string(", "))
-    Com.Dec(DEBUG_COM, joyY)
+  Com.Str(DEBUG_COM, string(11, 13, "a joy = "))
+  Com.Dec(DEBUG_COM, joyX)
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, joyY)
+   
+  GetNunchuckData
+  Com.Str(DEBUG_COM, string(11, 13, "b joy = "))
+  Com.Dec(DEBUG_COM, joyX)
+  Com.Str(DEBUG_COM, string(", "))
+  Com.Dec(DEBUG_COM, joyY)
 
 
 PRI UpdateActive(changeAmount)
@@ -756,12 +814,12 @@ PUB ScriptedProgram
 
   '' Initialize Script Portion of Program
   if debugFlag => SCRIPT_INTRO_DEBUG 
-    Com.Strse(0, string(11, 13, "Starting Demo", 11, 13))
+    Com.Str(0, string(11, 13, "Starting Demo", 11, 13))
    
   waitcnt(clkfreq / 4 + cnt)
   if debugFlag => SCRIPT_DEBUG
-    Com.Lock
-    Com.Txe(0, 12) ' clear below
+    'Com.Lock
+    Com.Tx(0, 12) ' clear below
 
   PlayRoute(@twoByOneMRectanglePlusTwo8s)
  
@@ -771,7 +829,7 @@ PUB ScriptedProgram
 
   inputIndex := 0            
   if debugFlag => SCRIPT_INTRO_DEBUG
-    Com.Strse(0, string(11, 13, "End of Demo", 11, 13))
+    Com.Str(0, string(11, 13, "End of Demo", 11, 13))
 
 PRI PlayRoute(routePtr)
 
@@ -784,12 +842,12 @@ PRI ExecuteStoredCommand(commandPtr)
   inputIndex := strsize(commandPtr) + 1
   bytemove(@inputBuffer, commandPtr, inputIndex)
   if debugFlag => SCRIPT_EXECUTE_DEBUG
-    Com.Txs(0, 11)
+    Com.Tx(0, 11)
     Com.Tx(0, 13)
-    Com.Stre(0, commandPtr)
+    Com.Str(0, commandPtr)
   if error := \Parse                          '   Run the parser and trap and report errors
     if debugFlag => SCRIPT_WARNING_DEBUG
-      Com.Strse(0, error)  
+      Com.Str(0, error)  
 
 PRI ExecuteAndWait(pointer)
 
@@ -804,7 +862,7 @@ PRI TempDebug(port)
   if port
     return
               
-  Com.Txs(port, 11)
+  Com.Tx(port, 11)
   Com.Tx(port, 1) ' home
   Com.Str(0, string(11, 13, "Cleaver"))
  
@@ -819,10 +877,19 @@ PRI TempDebug(port)
   Com.Dec(port, long[activeParameter])
 
 
-  Com.Str(port, string(11, 13, "kIN = "))
+ { Com.Str(port, string(11, 13, "kIN = "))
   Com.Dec(port, kIntegralNumerator) 
   Com.Str(port, string(", kID = "))
-  Com.Dec(port, kIntegralDenominator) 
+  Com.Dec(port, kIntegralDenominator)} 
+
+  Com.Str(port, string(11, 13, "nunchuckReadyFlag = "))
+  Com.Dec(port, nunchuckReadyFlag) 
+  Com.Str(port, string(", nunchuckReceiverConnectedFlag = "))
+  Com.Dec(port, nunchuckReceiverConnectedFlag)
+  Com.Str(port, string(", Nunchuck's ID = "))
+  Com.Hex(port, long[nuchuckIdPtr], 8)
+
+  
   
  { if debugFlag => PING_DEBUG
     Com.Str(port, string(11, 13, "pingCount = "))
@@ -860,6 +927,10 @@ PRI TempDebug(port)
       Com.Dec(port, setPosition[result])
       Com.Str(port, string(", integral = "))
       Com.Dec(port, integral[result])
+
+      Com.Str(port, string(11, 13, "midVelocity = "))
+      Com.Dec(port, midVelocity[result])
+      
       Com.Str(port, string(11, 13, "motorPosition["))
       Com.Dec(port, result)
       Com.Str(port, string("] = "))
@@ -890,7 +961,7 @@ PRI TempDebug(port)
   
                 
   Com.Tx(port, 11)
-  Com.Txe(port, 13)
+  Com.Tx(port, 13)
 
 PUB MotorControlStackDebug(port)
 
@@ -1470,11 +1541,18 @@ PRI Travels(distanceLeft, distanceRight, speedLeft, speedRight)
     longfill(@activePositionAcceleration, maxPosAccel, 2)
      
   longfill(@stillCnt, 0, 2)
+
+  repeat result from LEFT_MOTOR to RIGHT_MOTOR
+    if distanceLeft[result] < 0
+      direction[result] := -1
+    else
+      direction[result] := 1
+
   mode := POSITION
      
 PRI ExtraHeadingDebug(heading)
  
-  Com.Strs(0, string(11, 13, "Heading = ((("))
+  Com.Str(0, string(11, 13, "Heading = ((("))
   Com.Dec(0, motorPosition[LEFT_MOTOR])
   Com.Str(0, string(" + "))
   Com.Dec(0, motPosOffset[LEFT_MOTOR])
@@ -1491,32 +1569,19 @@ PRI ExtraHeadingDebug(heading)
   Com.Dec(0, heading)
         
   Com.Tx(0, 11) ' clear end
-  Com.Txe(0, 13)
+  Com.Tx(0, 13)
 
 PRI InterpolateMidVariables : side | difference  ' called from parsing cog
 '' Sets midVelocity and midPosition variables to values that would create the current
 '' targetPower at the current motorPosition
 
   bytefill(@midReachedSetFlag, 0, 2)
+  longfill(@gDifference, 0, 2)
+  longfill(@midVelAcc, 0, 2)
+  longfill(@midPosAcc, 0, 2)
+  longmove(@midPosition, @motorPosition, 2)
+  longmove(@midVelocity, @motorSpeed, 2)
 
-  repeat side from LEFT_MOTOR to RIGHT_MOTOR
-
-    ' Determine midPosition to motorPosition offset
-    if difference := targetPower[side] / kProportional[side]                
-      if difference => DEADZONE   ' Adjust for the deadzone   
-        difference -= DEADZONE 
-      elseif difference =< -DEADZONE
-        difference += DEADZONE
-      midPosition[side] := motorPosition[side] + difference
-      ' Add it back to the current Motor Position
-    else 
-      midPosition[side] := motorPosition[side]
-    midPosAcc[side]~                                ' Clear the fractional part
-  
-    ' Set the midVelocity to the current motor speed
-    midVelocity[side] := motorSpeed[LEFT_MOTOR] 
-    midVelAcc[side]~        ' Clear the fractional part
- 
 PRI PDLoop : side | nextControlCycle
 '' Measure, set, and maintain wheel position
 
@@ -1728,12 +1793,12 @@ PRI ParseDec(pointer) | character, sign                       '' Interpret an AS
 
   sign := 1
   if debugFlag => PARSE_DEC_DEBUG
-    Com.Strse(0, string(11, 13, "ParseDec"))
+    Com.Str(0, string(11, 13, "ParseDec"))
   repeat 11
     if debugFlag => PARSE_DEC_DEBUG
-      Com.Strs(0, string(", byte[] ="))
+      Com.Str(0, string(", byte[] ="))
       SafeTxUsb(0, byte[pointer])
-      Com.E
+      'Com.E
     case character := byte[pointer++]
       NUL:
         result *= sign
@@ -1785,26 +1850,26 @@ PRI OutputDec(value) | i, x                             '' Create a decimal stri
 PRI Rx(port)
 
   if port == USB_SERIAL
-    Com.Lock
+    'Com.Lock
     result := Com.Rx(0)
-    Com.E
+    'Com.E
   else
-    Slave.Lock  
+    'Slave.Lock  
     result := Slave.Rx(0)
-    Slave.E
+    'Slave.E
     
 PRI SendResponse                                        '' Transmit the string in the output buffer and clear the buffer
 
   result := outputIndex <# OUTPUT_COPY_BUFFER_SIZE
  
   if controlCom == USB_SERIAL
-    Com.Lock
+    'Com.Lock
     Com.Str(0, @outputBuffer)                               ' Transmit the buffer contents
-    Com.Stre(0, @prompt)                                     ' Transmit the prompt
+    Com.Str(0, @prompt)                                     ' Transmit the prompt
   else
-    Slave.Lock
+    'Slave.Lock
     Slave.Str(0, @outputBuffer)                               ' Transmit the buffer contents
-    Slave.Stre(0, @prompt)                                     ' Transmit the prompt
+    Slave.Str(0, @prompt)                                     ' Transmit the prompt
   inputIndex~                                           ' Clear the buffers
   '** Why clear inputIndex here?
   
@@ -1951,22 +2016,36 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
 '' Called by debug cog
 '' Nunchuck's coordinate system is different from robot's.
 '' 
-  if nunchuckReadyFlag == 0
+  if nunchuckReceiverConnectedFlag == 0
     CheckForNunchuck
-    if nunchuckReadyFlag == 0
+    if nunchuckReceiverConnectedFlag == 0
+      Com.Str(DEBUG_COM, string(11, 13, "No Nunchuck Receiver Found")) 
       return
       
-  Com.Str(DEBUG_COM, string(11, 13, "Before Nunchuck.Scan"))
+  'Com.Str(DEBUG_COM, string(11, 13, "Before Nunchuck.Scan"))
   Nunchuck.Scan
-  Com.Str(DEBUG_COM, string(11, 13, "After Nunchuck.Scan"))
+  'Com.Str(DEBUG_COM, string(11, 13, "After Nunchuck.Scan"))
   rightX := Nunchuck.joyx
   rightY := Nunchuck.joyy
   nunchuckAcceleration[0] := Nunchuck.accx
   nunchuckAcceleration[1] := Nunchuck.accy
   nunchuckAcceleration[2] := Nunchuck.accz
   nunchuckButton := Nunchuck.buttons
-  
 
+  if nunchuckAcceleration[0] == 1023 and nunchuckAcceleration[1] == 1023 and {
+    } nunchuckAcceleration[2] == 1023
+    nunchuckReadyFlag := 0
+    Com.Str(DEBUG_COM, string(11, 13, "No Nunchuck Transmitter Found"))
+    targetSpeed[LEFT_MOTOR] := 0
+    targetSpeed[RIGHT_MOTOR] := 0
+    targetPower[LEFT_MOTOR] := 0
+    targetPower[RIGHT_MOTOR] := 0
+    return
+  else
+    nunchuckReadyFlag := 1
+    
+  DisplayTwoDataPoints(rightX * MAX_LED_INDEX / 255, GREEN, rightY * MAX_LED_INDEX / 255, RED, OFF)
+  
   Com.Str(DEBUG_COM, string(11, 13, "Nunchuck = "))
   Com.Dec(DEBUG_COM, rightX)
   Com.Str(DEBUG_COM, string(", "))
@@ -2064,8 +2143,8 @@ PUB CheckForNunchuck
   Com.Str(DEBUG_COM, string("Nunchuck ID = ", QUOTE))   
   SafeDebug(DEBUG_COM, nuchuckIdPtr, 4)
   Com.Tx(DEBUG_COM, QUOTE) 
-  if long[nuchuckIdPtr] <> -1
-    nunchuckReadyFlag := 1
+  if long[nuchuckIdPtr] == VALID_NUNCHUCK_ID '$04C4B400
+    nunchuckReceiverConnectedFlag := 1
   
 PUB CheckPointedUp
 
@@ -2087,6 +2166,51 @@ PUB PauseForRx
     Com.Rx(DEBUG_COM)
   else
     waitcnt(pauseTime + cnt)
+
+PUB DisplayTwoDataPoints(value0, color0, value1, color1, backgroundColor) | freezeError[2]
+
+  value0 := 0 #> value0 <# MAX_LED_INDEX
+  value1 := 0 #> value1 <# MAX_LED_INDEX
+  
+  longfill(@fullBrightnessArray, backgroundColor, LEDS_IN_USE)
+  
+  fullBrightnessArray[value0] |= color0
+  fullBrightnessArray[value1] |= color1
+  
+  AdjustAndSet(@fullBrightnessArray, brightness, LEDS_IN_USE)
+      
+PUB DisplayPositionError | freezeError[2]
+
+  longmove(@freezeError, @gDifference, 2)
+  longfill(@fullBrightnessArray, 0, LEDS_IN_USE)
+  freezeError[0] *= direction[0]
+  freezeError[1] *= direction[1]
+  if freezeError[0] > freezeError[1]
+    OrColors(0, freezeError[0] - freezeError[1] - 1, $FF0000)
+  elseif freezeError[0] < freezeError[1]
+    OrColors(0, freezeError[1] - freezeError[0] - 1, $FF00)
+  AdjustAndSet(@fullBrightnessArray, brightness, LEDS_IN_USE)
+      
+PUB AdjustAndSet(colorPtr, localBrightness, size)
+
+  size--
+  repeat result from 0 to size
+    Led.set(result, AdjustBrightness(long[colorPtr][result], localBrightness))
+  
+PUB AdjustBrightness(color, localBrightness) | localIndex, temp
+
+  repeat localIndex from 0 to 2
+    'byte[@result][localIndex] := byte[@color][localIndex] * localBrightness / 255  'doesn't work
+    temp := byte[@color][localIndex] * localBrightness / 255
+    byte[@result][localIndex] := temp
+    
+PUB OrColors(firstLed, lastLed, localColor) : colorIndex
+  
+  firstLed := 0 #> firstLed <# MAX_LED_INDEX
+  lastLed := 0 #> lastLed <# MAX_LED_INDEX
+
+  repeat colorIndex from firstLed to lastLed
+    fullBrightnessArray[colorIndex] |= localColor
 
 DAT
 
@@ -2137,6 +2261,11 @@ targetSpeedLTxt                 byte "targetSpeed[LEFT]", 0
 targetSpeedRTxt                 byte "targetSpeed[RIGHT]", 0
 controlFrequencyTxt             byte "controlFrequency", 0
 
+DAT ' color buffers
+
+rainbow                         long RED, ORANGE, YELLOW, CHARTREUSE, GREEN
+                                long CYAN, BLUE, INDIGO, VIOLET, REALWHITE
+ 
 DAT ' script buffers
 
 introTempo                      byte "TEMPO 1500", 0

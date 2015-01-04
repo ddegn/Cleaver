@@ -329,7 +329,8 @@ OBJ
 PUB Main 
 
   Master.Init
-  Master.AddPort(0, Header#MASTER_RX, Header#MASTER_TX, -1, -1, 0, BAUDMODE, Header#MASTER_BAUD)
+  Master.AddPort(0, Header#PROP_TO_PROP_RX, Header#PROP_TO_PROP_TX, -1, -1, 0, BAUDMODE, {
+  } Header#PROP_TO_PROP_BAUD)
   Master.Start                                             'Start the ports
  
   Com.Init

@@ -8,7 +8,7 @@ CON{
 
   Rename from "HeaderEddieAbHb25Encoders141231a" to "HeaderCleaver141231a".
 }  
-CON '' Activity Board Constants
+CON '' Master Pin Assignments
   
   ' Encoders
   ENCODERS_PIN = 14
@@ -22,6 +22,28 @@ CON '' Activity Board Constants
   ADC_DO = 19 
   ADC_DI = 18
 
+CON '' Shared Pin Assignments
+
+    ' PC COMMUNICATION
+  USB_TX = 30 
+  USB_RX = 31
+
+  'Prop to Prop Communication
+  PROP_TO_PROP_TX = 6
+  PROP_TO_PROP_RX = 7
+  
+CON '' Slave Pin Assignments
+
+  PING_0 = 0                                          
+  PING_1 = 1                                           
+  
+  
+  ' PROP TO PROP COMMUNICATION
+  'MASTER_TX = 6                                         
+  'MASTER_RX = 7                                          
+
+  'SLAVE_TX = 6                                         
+  'SLAVE_RX = 7
   
 CON 
  
@@ -37,23 +59,12 @@ CON
   LEFT_MOTOR
   RIGHT_MOTOR
 
-  ' Pin assignments
+ 
   ' Ping))) sensors
-  PING_0 = 0                                          
-  PING_1 = 1                                           
   PINGS_IN_USE = 2                                     
   INITIAL_PING = |< PING_0 | |< PING_1                
    
-  ' PC COMMUNICATION
-  USB_TX = 30 
-  USB_RX = 31
-  
-  ' PROP TO PROP COMMUNICATION
-  MASTER_TX = 10                                         
-  MASTER_RX = 11                                          
-
-  SLAVE_TX = 10                                         
-  SLAVE_RX = 11                                         
+                                   
 
   ' Master GPIO mask (Only high pins can be set as outputs)
   OUTPUTABLE = %00001100_00000000_00000011_11111111 
@@ -67,8 +78,9 @@ CON
   BAUDMODE = %0000
   MASTER_USB_BAUD = 115_200                                   
   SLAVE_USB_BAUD = 115_200                                   
-  MASTER_BAUD = 115_200                                 
-  SLAVE_BAUD = MASTER_BAUD                                
+  PROP_TO_PROP_BAUD = 115_200                                 
+  'MASTER_BAUD = 115_200                                 
+  'SLAVE_BAUD = MASTER_BAUD                                
   EMIC_BAUD = 9_600
   SR02_BAUD = 9_600
   
