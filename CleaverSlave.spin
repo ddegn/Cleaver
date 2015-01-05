@@ -1,15 +1,5 @@
-CON{{ ****** Public Notes ******
-
-  
-  
+CON{{ ****** Public Notes ******  
 }}
-CON{
-  ****** Duane's Working Notes ******
-
-  Change name from "Cleaver141231a" to "CleaverSlave141231a".
-  141231a Start modifying code to use as a slave to the main Cleaver board.
-  
-}
 CON 
   
   _clkmode = xtal1 + pll16x
@@ -135,8 +125,7 @@ CON '' Debug Levels
 
 CON 
 
-  #0, MASTER_COM, ALT_COM
-
+  
   FILL_LONG = $AA55_55AA   ' used to test stack sizes.
  
   PING_STACK_SIZE = 24 ' It appears the cog monitoring the Pings use 23 longs
@@ -157,7 +146,7 @@ CON
   SR02_TRIGGER_PIN = 19
 
   ' Servos are attached to the slave board not this board.
-  SERVO_PIN_0 = 2
+  SERVO_PIN_0 = Header#FIRST_SERVO_PIN
   SERVO_PIN_1 = SERVO_PIN_0 + 1
   SERVO_PIN_2 = SERVO_PIN_1 + 1
   SERVO_PIN_3 = SERVO_PIN_2 + 1
@@ -241,19 +230,18 @@ CON
   #0, PLAY_BACK_SUCCESS, PLAY_BACK_ERROR_NOT_FOUND, PLAY_BACK_ERROR_OTHER
 
   #0, MASTER_SERIAL, COM_SERIAL
+
+  #0, MASTER_CONTROL_SERIAL, USB_CONTROL_SERIAL, NO_ACTIVE_CONTROL_SERIAL
+
   #0, DEBUG_COM, EMIC_COM, SR02_COM', XBEE_COM
 
 CON '' Cog Usage
 {{
-  The objects, "Com", "Ping", "Servo", "Encoder" and "AltCom" each start
+  The objects, "Master", "Com", "Ping" and "Servo" each start
   their own cog.
   
-  This top object uses two cogs bringing the total of cogs used to 7.
-  Depending on the motor controller used.
+  This top object uses one cog bringing the total of cogs used to 6.
   
-  The object "Music" is not presently active and each require
-  a cog to use.
- 
 }}
 VAR
 
@@ -310,9 +298,14 @@ halfInterval                    long DEFAULT_HALF_INTERVAL
 debugFlag                       byte 0 ' FULL_DEBUG
                       
 mode                            byte 0                  ' Current mode of the control system
+controlSerial                   byte NO_ACTIVE_CONTROL_SERIAL
 
 activeServo                     byte 6
 
+servoPins                       byte PORT_PAN_PIN, PORT_TILT_PIN
+                                byte MIDDLE_PAN_PIN, MIDDLE_TILT_PIN
+                                byte STARBOARD_PAN_PIN, STARBOARD_TILT_PIN
+                                
 OBJ                             
                                 
   Header : "HeaderCleaver"         
@@ -328,7 +321,7 @@ OBJ
   
 PUB Main 
 
-  Master.Init
+  Master.Init ' Initialize MASTER_SERIAL driver
   Master.AddPort(0, Header#PROP_TO_PROP_RX, Header#PROP_TO_PROP_TX, -1, -1, 0, BAUDMODE, {
   } Header#PROP_TO_PROP_BAUD)
   Master.Start                                             'Start the ports
@@ -346,15 +339,16 @@ PUB Main
   ' Continuously trigger and read pulse widths on PING))) pins
   pingsInUse := Ping.GetPingsInUse
   maxPingIndex := pingsInUse - 1
+  controlSerial := NO_ACTIVE_CONTROL_SERIAL 'DEFAULT_CONTROL_COM
   
   if debugFlag => INTRO_DEBUG
-    Master.Strs(MASTER_COM, string(11, 13, "CleaverSlave"))
+    Com.Strs(DEBUG_COM, string(11, 13, "CleaverSlave"))
       
-    Master.Tx(MASTER_COM, 7) ' Bell sounds in terminal to catch reset issues
+    Com.Tx(DEBUG_COM, 7) ' Bell sounds in terminal to catch reset issues
     waitcnt(clkfreq / 4 + cnt)
-    Master.Tx(MASTER_COM, 7)
+    Com.Tx(DEBUG_COM, 7)
     waitcnt(clkfreq / 4 + cnt)
-    Master.Txe(MASTER_COM, 7)
+    Com.Txe(DEBUG_COM, 7)
   
     
   'activeParameter := @targetPower[RIGHT_MOTOR]
@@ -367,36 +361,28 @@ PUB MainLoop | rxcheck, lastDebugTime
   lastComTime := cnt
   repeat                                                ' Main loop (repeats forever) 
     repeat           ' Read a byte from the command UART
-    
-      Master.Lock
-      rxcheck := Master.RxCheck(MASTER_COM)
-      Master.E ' clear lock 
-      
-   
-      if rxcheck <> -1
-      
-      'else
-      {Com.Lock
-      rxcheck := Com.RxCheck(0)
-      Com.E
-      if rxcheck <> -1
-        'if debugFlag => PROP_CHARACTER_DEBUG
-        '  Master.Strs(MASTER_COM, string(11, 13, "From Prop:", 34))
-        '  Master.Tx(MASTER_COM, rxcheck)
-        '  Master.Txe(MASTER_COM, 34)  
-        controlCom := ALT_COM
-      }        
-      
-      
-      ' Stop motors if no communication has been received in the allowed time
-      ' (dwd 141125b I changed time keeping variables from original code.)
-      ' The allowed time (in millieseconds) may be changed with the "KILL" command.
-      ' The "WATCH" command will change the time in seconds.
+
+      if controlSerial == NO_ACTIVE_CONTROL_SERIAL or controlSerial == MASTER_CONTROL_SERIAL
+        Master.Lock
+        rxcheck := Master.RxCheck(0)
+        Master.E ' clear lock
+        if rxcheck <> -1
+          controlSerial := MASTER_CONTROL_SERIAL
+        { 'if debugFlag => PROP_CHARACTER_DEBUG
+          '  Com.Strs(DEBUG_COM, string(11, 13, "From Prop:", 34))
+          '  Com.Tx(DEBUG_COM, rxcheck)
+          '  Com.Txe(DEBUG_COM, 34)}
+      if controlSerial == NO_ACTIVE_CONTROL_SERIAL or controlSerial == USB_CONTROL_SERIAL
+        Com.Lock
+        rxcheck := Com.RxCheck(DEBUG_COM)
+        Com.E ' clear lock    
+        if rxcheck <> -1
+          controlSerial := USB_CONTROL_SERIAL
      
       if true 'cnt - lastDebugTime > debugInterval
         'lastDebugTime += debugInterval
         if debugFlag => MAIN_DEBUG
-          TempDebug(MASTER_COM)
+          TempDebug
     while rxcheck < 0
        
     inputBuffer[inputIndex++] := rxcheck
@@ -406,22 +392,22 @@ PUB MainLoop | rxcheck, lastDebugTime
       if true
         OutputStr(@overflow)
       repeat                                            ' Ignore all inputs other than NUL or CR (terminating a command) 
-        case Rx(MASTER_COM)                        ' Send the correct error response for the transmission mode
+        case Rx(controlSerial)                        ' Send the correct error response for the transmission mode
           {
           NUL :                                         '   Checksum mode
             SendChecksumResponse
             quit
           }
           CR :                                          '   Plain text mode
-            SendResponse    ' branch # 1 termination 
+            SendResponse(controlSerial)
             quit
     else                                                ' If there isn't a buffer overflow...                              
       case inputBuffer[inputIndex - 1]                  ' Parse the character
         
         NUL :                                           ' End command in checksum mode:
           if debugFlag => INPUT_WARNINGS_DEBUG
-            Master.Strs(MASTER_COM, string(11, 13, 7, "Error, NUL character received.", 7))
-            Master.Stre(MASTER_COM, Error)
+            Com.Strs(DEBUG_COM, string(11, 13, 7, "Error, NUL character received.", 7))
+            Com.Stre(DEBUG_COM, Error)
             waitcnt(clkfreq * 2 + cnt)
 
           {if inputIndex > 1                             '   Only parse buffer if it has content
@@ -456,7 +442,7 @@ PUB MainLoop | rxcheck, lastDebugTime
               if true
                 OutputStr(error)
 
-            SendResponse                                '   Send a response if no error
+            SendResponse(controlSerial)   '   Send a response if no error
            
           else                                          '   For an empty buffer, clear the pointer
             inputIndex~                                 '   to start receiving a new command
@@ -479,81 +465,78 @@ PRI UpdateActive(changeAmount)
     inputIndex--
     lastComTime := cnt
 
-PRI TempDebug(port)
+PRI TempDebug
+    
+  Com.Txs(DEBUG_COM, 11)
+  Com.Tx(DEBUG_COM, 1) ' home
+  Com.Str(DEBUG_COM, string(11, 13, "CleaverSlave"))
 
-  if port <> MASTER_COM
-    return
-              
-  Master.Txs(port, 11)
-  Master.Tx(port, 1) ' home
-  Master.Str(MASTER_COM, string(11, 13, "CleaverSlave"))
-
-  Master.Str(port, string(", mode = "))
-  Master.Dec(port, mode)
-  Master.Str(port, string(" = "))
-  Master.Str(port, FindString(@modeAsText, mode)) 
+  Com.Str(DEBUG_COM, string(", mode = "))
+  Com.Dec(DEBUG_COM, mode)
+  Com.Str(DEBUG_COM, string(" = "))
+  Com.Str(DEBUG_COM, FindString(@modeAsText, mode)) 
  
-  Master.Str(port, string(11, 13, "activeParameter = "))
-  Master.Str(port, activeParTxtPtr)  
-  Master.Str(port, string(" = "))
-  Master.Dec(port, long[activeParameter])
+  Com.Str(DEBUG_COM, string(11, 13, "activeParameter = "))
+  Com.Str(DEBUG_COM, activeParTxtPtr)  
+  Com.Str(DEBUG_COM, string(" = "))
+  Com.Dec(DEBUG_COM, long[activeParameter])
 
 
   if debugFlag => PING_DEBUG
-    Master.Str(port, string(11, 13, "pingCount = "))
-    Master.Dec(port, pingCount)
-    Master.Str(port, string(", pingMask = "))
-    Master.Dec(port, pingMask)
-    Master.Str(port, string(", pingInterval = "))
-    Master.Dec(port, pingInterval)
+    Com.Str(DEBUG_COM, string(11, 13, "pingCount = "))
+    Com.Dec(DEBUG_COM, pingCount)
+    Com.Str(DEBUG_COM, string(", pingMask = "))
+    Com.Dec(DEBUG_COM, pingMask)
+    Com.Str(DEBUG_COM, string(", pingInterval = "))
+    Com.Dec(DEBUG_COM, pingInterval)
     
-    Master.Str(port, string(", pingResults = "))
-    Master.Dec(port, pingResults[0])
-    Master.Str(port, string(", "))
-    Master.Dec(port, pingResults[1])
+    Com.Str(DEBUG_COM, string(", pingResults = "))
+    Com.Dec(DEBUG_COM, pingResults[0])
+    Com.Str(DEBUG_COM, string(", "))
+    Com.Dec(DEBUG_COM, pingResults[1])
 
   'PingStackDebug(port) 
                 
-  Master.Tx(port, 11)
-  Master.Txe(port, 13)
+  Com.Tx(DEBUG_COM, 11)
+  Com.Txe(DEBUG_COM, 13)
       
 PUB PingStackDebug(port)
 
-  Master.Str(port, string(11, 13, "Ping Stack = ", 11, 13))
-  DumpBufferLong(port, @pingStack, PING_STACK_SIZE, 12)
+  Com.Str(DEBUG_COM, string(11, 13, "Ping Stack = ", 11, 13))
+  DumpBufferLong(@pingStack, PING_STACK_SIZE, 12)
 
-PUB DumpBuffer(port, bufferPtr, bufferSize, interestedLocationPtr, offset) : localIndex
+PUB DumpBuffer(bufferPtr, bufferSize, interestedLocationPtr, offset) : localIndex
 
   bufferSize--
 
   repeat localIndex from 0 to bufferSize
     if long[interestedLocationPtr] - offset == localIndex
-      Master.Tx(port, "*")
-    Master.Dec(port, long[bufferPtr][localIndex])
+      Com.Tx(DEBUG_COM, "*")
+    Com.Dec(DEBUG_COM, long[bufferPtr][localIndex])
     
     if localIndex // 8 == 7 and localIndex <> bufferSize
-      Master.Tx(port, 11)
-      Master.Tx(port, 13)
+      Com.Tx(DEBUG_COM, 11)
+      Com.Tx(DEBUG_COM, 13)
     elseif localIndex <> bufferSize  
-      Master.Tx(port, ",")
-      Master.Tx(port, 32)  
+      Com.Tx(DEBUG_COM, ",")
+      Com.Tx(DEBUG_COM, 32)  
 
-PRI DumpBufferLong(port, localPtr, localSize, localColumns) | localIndex
+PRI DumpBufferLong(localPtr, localSize, localColumns) | localIndex
 
  
-  Master.Str(port, string("DumpBufferLong @ $"))
-  Master.Dec(port, localPtr)
+  Com.Str(DEBUG_COM, string("DumpBufferLong @ $"))
+  Com.Dec(DEBUG_COM, localPtr)
 
-  Master.Tx(port, 11) 
+  Com.Tx(DEBUG_COM, 11) 
   
   repeat localIndex from 0 to localSize - 1
     if localIndex // localColumns == 0
-      Master.Tx(port, 11) 
-      Master.Tx(port, 13) 
+      Com.Tx(DEBUG_COM, 11) 
+      Com.Tx(DEBUG_COM, 13) 
     else
-      Master.Tx(port, 32)  
-    Master.Tx(port, "$")  
-    Master.Hex(port, long[localPtr][localIndex], 8)
+      Com.Tx(DEBUG_COM, 32)  
+    Com.Tx(DEBUG_COM, "$")  
+    Com.Hex(DEBUG_COM, long[localPtr][localIndex], 8)
 
 PUB FindString(firstStr, stringIndex)      '' Called from DebugCog
 '' Finds start address of one string in a list
@@ -570,21 +553,21 @@ PUB FindString(firstStr, stringIndex)      '' Called from DebugCog
     repeat while byte[result++]  
     stringIndex--
     
-PUB SafeDebug(port, ptr, size)
+PUB SafeDebug(ptr, size)
 
   repeat size
-    SafeTx(port, byte[ptr++])
+    SafeTx(byte[ptr++])
     
-PUB SafeTx(port, character)
+PUB SafeTx(character)
 
   case character
     32.."~":
-      Master.Tx(port, character)
+      Com.Tx(DEBUG_COM, character)
     other:
-      Master.Tx(port, "<")
-      Master.Tx(port, "$")
-      Master.Hex(port, character, 2)
-      Master.Tx(port, ">")
+      Com.Tx(DEBUG_COM, "<")
+      Com.Tx(DEBUG_COM, "$")
+      Com.Hex(DEBUG_COM, character, 2)
+      Com.Tx(DEBUG_COM, ">")
       
 PRI Parse                                               '' Parse the command in the input buffer
 '' Since Spin only allows 16 "elseif" statements in a row, the parsing
@@ -694,12 +677,12 @@ PRI ParseDec(pointer) | character, sign                       '' Interpret an AS
 
   sign := 1
   if debugFlag => PARSE_DEC_DEBUG
-    Master.Strse(MASTER_COM, string(11, 13, "ParseDec"))
+    Com.Strse(DEBUG_COM, string(11, 13, "ParseDec"))
   repeat 11
     if debugFlag => PARSE_DEC_DEBUG
-      Master.Strs(MASTER_COM, string(", byte[] ="))
-      SafeTx(MASTER_COM, byte[pointer])
-      Master.E
+      Com.Strs(DEBUG_COM, string(", byte[] ="))
+      SafeTx(byte[pointer])
+      Com.E
     case character := byte[pointer++]
       NUL:
         result *= sign
@@ -748,23 +731,27 @@ PRI OutputDec(value) | i, x                             '' Create a decimal stri
       OutputChr("0")                                    ' If zero digit (or only digit) output it
     i /= 10                                             ' Update CONTROL_FREQUENCY
 
-PRI Rx(port)
+PRI Rx(serialDriver)
 
-  if port == ALT_COM
-    return '**141220d 
-    '**141220d Com.Lock
-    '**141220d result := Com.Rx(0)
-    '**141220d Com.E
+  if serialDriver == USB_CONTROL_SERIAL
+    Com.Lock
+    result := Com.Rx(DEBUG_COM)
+    Com.E
   else
     Master.Lock  
     result := Master.Rx(0)
     Master.E
     
-PRI SendResponse                                        '' Transmit the string in the output buffer and clear the buffer
+PRI SendResponse(serialDriver)  '' Transmit the string in the output buffer and clear the buffer
 
-  Master.Lock
-  Master.Str(0, @outputBuffer)  ' Transmit the buffer contents
-  Master.Stre(0, @prompt)       ' Transmit the prompt
+  if serialDriver == USB_CONTROL_SERIAL
+    Com.Lock
+    Com.Str(DEBUG_COM, @outputBuffer)  ' Transmit the buffer contents
+    Com.Stre(DEBUG_COM, @prompt)       ' Transmit the prompt
+  else
+    Master.Lock
+    Master.Str(0, @outputBuffer)  ' Transmit the buffer contents
+    Master.Stre(0, @prompt)       ' Transmit the prompt
   inputIndex := 0               ' Clear the buffers
   '** Why clear inputIndex here?
   
@@ -1058,7 +1045,7 @@ PUB GetLaserRange | inputcharacter
     inputcharacter := Com.RxTime(SR02_COM, 100)
     'inputcharacter := Com.RxCheck(SR02_COM)
     'Com.Str(DEBUG_COM, string(11, 13, "After RxTime Call.")) 
-    SafeTx(DEBUG_COM, inputcharacter)
+    SafeTx(inputcharacter)
     'Com.Str(DEBUG_COM, string(11, 13, "After SafeTx Call.")) 
     case inputcharacter
       "0".."9":
@@ -1112,9 +1099,10 @@ modeAsText                      byte "POWER", 0
 kpControlTypeTxt                byte "TARGET_DEPENDENT", 0
                                 byte "CURRENT_SPEED_DEPENDENT", 0
                                 
-comTxt                          byte "MASTER_COM", 0
-                                byte "ALT_COM", 0
-  
+serialTxt                       byte "MASTER_CONTROL_SERIAL", 0
+                                byte "USB_CONTROL_SERIAL", 0
+                                byte "NO_ACTIVE_CONTROL_SERIAL", 0
+                                
 ' Active Parameter Text
 maxPowAccelTxt                  byte "maxPowAccel", 0 
 maxPosAccelTxt                  byte "maxPosAccel", 0

@@ -9,7 +9,9 @@ CON{
   Rename from "HeaderEddieAbHb25Encoders141231a" to "HeaderCleaver141231a".
 }  
 CON '' Master Pin Assignments
-  
+
+  MASTER_TO_SLAVE_TX = 6
+  MASTER_FROM_SLAVE_RX = 7
   ' Encoders
   ENCODERS_PIN = 14
 
@@ -36,7 +38,11 @@ CON '' Slave Pin Assignments
 
   PING_0 = 0                                          
   PING_1 = 1                                           
-  
+
+  FIRST_SERVO_PIN = 2
+
+  SLAVE_TO_MASTER_TX = 8
+  SLAVE_FROM_MASTER_RX = 9
   
   ' PROP TO PROP COMMUNICATION
   'MASTER_TX = 6                                         
