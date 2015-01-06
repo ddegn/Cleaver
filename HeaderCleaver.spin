@@ -24,15 +24,18 @@ CON '' Master Pin Assignments
   ADC_DO = 19 
   ADC_DI = 18
 
-CON '' Shared Pin Assignments
+  MASTER_USB_BAUD = 115_200                                   
+  
+CON '' Shared Pin Assignments and Other Shared Constants
 
     ' PC COMMUNICATION
   USB_TX = 30 
   USB_RX = 31
 
-  'Prop to Prop Communication
-  PROP_TO_PROP_TX = 6
-  PROP_TO_PROP_RX = 7
+  ' Serial Port Settings
+  BAUDMODE = %0000
+  PROP_TO_PROP_BAUD = 9_600 '115_200                                 
+ 
   
 CON '' Slave Pin Assignments
 
@@ -44,12 +47,23 @@ CON '' Slave Pin Assignments
   SLAVE_TO_MASTER_TX = 8
   SLAVE_FROM_MASTER_RX = 9
   
-  ' PROP TO PROP COMMUNICATION
-  'MASTER_TX = 6                                         
-  'MASTER_RX = 7                                          
+  EMIC_RX = 13
+  EMIC_TX = 12
+  EASY_VR_RX = 15
+  EASY_VR_TX = 14
+  'XBEE_RX =
+  'XBEE_TX =
+  SR02_RX = 11
+  SR02_TX = 10
+  
+  SR02_TRIGGER_PIN = 10
 
-  'SLAVE_TX = 6                                         
-  'SLAVE_RX = 7
+  SLAVE_USB_BAUD = 9_600 '115_200                                   
+  EASY_VR_BAUD = 9_600
+  EMIC_BAUD = 9_600
+  SR02_BAUD = 9_600
+
+  INITIAL_PING = |< PING_0 | |< PING_1                
   
 CON 
  
@@ -67,28 +81,9 @@ CON
 
  
   ' Ping))) sensors
-  PINGS_IN_USE = 2                                     
-  INITIAL_PING = |< PING_0 | |< PING_1                
-   
-                                   
-
-  ' Master GPIO mask (Only high pins can be set as outputs)
-  OUTPUTABLE = %00001100_00000000_00000011_11111111 
-  PINGABLE = %00000000_00000000_00000011_11111111
-  SERVOABLE = PINGABLE
-  MAX_ALLOWED_PINGS = 10
-
-  INITIAL_GPIO = OUTPUTABLE & !INITIAL_PING
-  
-  ' Serial Port Settings
-  BAUDMODE = %0000
-  MASTER_USB_BAUD = 115_200                                   
-  SLAVE_USB_BAUD = 115_200                                   
-  PROP_TO_PROP_BAUD = 115_200                                 
-  'MASTER_BAUD = 115_200                                 
-  'SLAVE_BAUD = MASTER_BAUD                                
-  EMIC_BAUD = 9_600
-  SR02_BAUD = 9_600
+  PINGS_IN_USE = 2  
+  SERVOS_IN_USE = 6
+  MAX_SERVO_INDEX = SERVOS_IN_USE - 1
   
   MAX_POWER = 7520
 
@@ -100,7 +95,7 @@ CON
   DEFAULT_INTEGRAL_NUMERATOR = 200                    
   DEFAULT_INTEGRAL_DENOMINATOR = 100                  
 
-CON
+CON '' Emic Codes
 
   #0, INTRO_EMIC, GOOD_COM_EMIC, BAD_COM_EMIC, SPEED_EMIC, FIGURE_8_EMIC', _EMIC, _EMIC, _EMIC, _EMIC
     
