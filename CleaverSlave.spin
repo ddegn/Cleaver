@@ -403,8 +403,9 @@ OBJ
                                 
   Header : "HeaderCleaver"         
 
-  Com : "Serial4PortLocks"                         ' uses one cog
-  Aux : "Serial4LocksA"                            ' uses one cog
+  'Com : "Serial4PortLocks"                         ' uses one cog
+  Aux : "FullDuplexSerial4port"                            ' uses one cog
+  AuxIo : "DataIo4Port"
   Ping : "EddiePingMonitor"                               ' uses one cog
   
   Servo : "Servo32v9Shared"                             ' uses one cog
@@ -414,17 +415,17 @@ OBJ
   
 PUB Main 
 
-  Com.Init ' Initialize MASTER_SERIAL driver
+  'Com.Init ' Initialize MASTER_SERIAL driver
   {Com.AddPort(MASTER_COM, Header#SLAVE_FROM_MASTER_RX, Header#SLAVE_TO_MASTER_TX, -1, -1, 0, BAUDMODE, {
   } Header#PROP_TO_PROP_BAUD)}
-  Com.AddPort(0, Header#SR02_RX, Header#SR02_TX, -1, -1, 0, BAUDMODE, {
-  } 19200)
-  Com.Start                                             'Start the ports
+  {Com.AddPort(0, Header#SR02_RX, Header#SR02_TX, -1, -1, 0, BAUDMODE, {
+  } 19200)}
+  'Com.Start                                             'Start the ports
  
   Aux.Init
   Aux.AddPort(DEBUG_AUX, Header#USB_RX, Header#USB_TX, -1, -1, 0, BAUDMODE, Header#SLAVE_USB_BAUD)
   'Aux.AddPort(EMIC_AUX, Header#EMIC_RX, Header#EMIC_TX, -1, -1, Com#DEFAULTTHRESHOLD, 0, Header#EMIC_BAUD)
-  Aux.AddPort(SR02_AUX, Header#SR02_RX, Header#SR02_TX, -1, -1, Com#DEFAULTTHRESHOLD, 0, Header#SR02_BAUD)
+  Aux.AddPort(SR02_AUX, Header#SR02_RX, Header#SR02_TX, -1, -1, Aux#DEFAULTTHRESHOLD, 0, Header#SR02_BAUD)
   'Aux.AddPort(EASY_VR_AUX, Header#EASY_VR_RX, Header#EASY_VR_TX, -1, -1, Com#DEFAULTTHRESHOLD, 0, Header#EASY_VR_BAUD)
   Aux.Start                                         'Start the ports    
  
@@ -460,7 +461,7 @@ PUB MainLoop | rxcheck, lastDebugTime
   repeat
     mainLoopCount++
     Aux.Str(DEBUG_AUX, string(11, 13, "mainLoopCount"))
-    Aux.Dec(DEBUG_AUX, mainLoopCount) 
+    AuxIo.Dec(DEBUG_AUX, mainLoopCount) 
     result := CheckSerial
     DigestCharacter(result)
 
@@ -558,7 +559,7 @@ PUB DigestCharacter(localCharacter)
       1..BEL, 10..12, 14..31, 127..255 :            ' Ignore invalid characters
         if debugFlag => INPUT_WARNINGS_DEBUG
           Aux.Str(DEBUG_AUX, string(11, 13, 7, "Invalid Character Error = <$"))
-          Aux.Hex(DEBUG_AUX, localCharacter, 2)
+          AuxIo.Hex(DEBUG_AUX, localCharacter, 2)
           Aux.Tx(DEBUG_AUX, ">")
           inputIndex--
           waitcnt(clkfreq / 2 + cnt)
@@ -584,30 +585,30 @@ PRI TempDebug
   Aux.Str(DEBUG_AUX, string(11, 13, "CleaverSlave"))
 
   Aux.Str(DEBUG_AUX, string(", mode = "))
-  Aux.Dec(DEBUG_AUX, mode)
+  AuxIo.Dec(DEBUG_AUX, mode)
   Aux.Str(DEBUG_AUX, string(" = "))
   Aux.Str(DEBUG_AUX, FindString(@modeAsText, mode)) 
       'controlSerialTxt
   Aux.Str(DEBUG_AUX, string(11, 13, "activeParameter = "))
   Aux.Str(DEBUG_AUX, activeParTxtPtr)  
   Aux.Str(DEBUG_AUX, string(" = "))
-  Aux.Dec(DEBUG_AUX, long[activeParameter])   
+  AuxIo.Dec(DEBUG_AUX, long[activeParameter])   
   Aux.Str(DEBUG_AUX, string(11, 13, "mainLoopCount = "))
-  Aux.Dec(DEBUG_AUX, mainLoopCount)  
+  AuxIo.Dec(DEBUG_AUX, mainLoopCount)  
   
 
   if debugFlag => PING_DEBUG
     Aux.Str(DEBUG_AUX, string(11, 13, "pingCount = "))
-    Aux.Dec(DEBUG_AUX, pingCount)
+    AuxIo.Dec(DEBUG_AUX, pingCount)
     Aux.Str(DEBUG_AUX, string(", pingMask = "))
-    Aux.Dec(DEBUG_AUX, pingMask)
+    AuxIo.Dec(DEBUG_AUX, pingMask)
     Aux.Str(DEBUG_AUX, string(", pingInterval = "))
-    Aux.Dec(DEBUG_AUX, pingInterval)
+    AuxIo.Dec(DEBUG_AUX, pingInterval)
     
     Aux.Str(DEBUG_AUX, string(", pingResults = "))
-    Aux.Dec(DEBUG_AUX, pingResults[0])
+    AuxIo.Dec(DEBUG_AUX, pingResults[0])
     Aux.Str(DEBUG_AUX, string(", "))
-    Aux.Dec(DEBUG_AUX, pingResults[1])
+    AuxIo.Dec(DEBUG_AUX, pingResults[1])
 
   'PingStackDebug(port) 
                 
@@ -626,7 +627,7 @@ PUB DumpBuffer(bufferPtr, bufferSize, interestedLocationPtr, offset) : localInde
   repeat localIndex from 0 to bufferSize
     if long[interestedLocationPtr] - offset == localIndex
       Aux.Tx(DEBUG_AUX, "*")
-    Aux.Dec(DEBUG_AUX, long[bufferPtr][localIndex])
+    AuxIo.Dec(DEBUG_AUX, long[bufferPtr][localIndex])
     
     if localIndex // 8 == 7 and localIndex <> bufferSize
       Aux.Tx(DEBUG_AUX, 11)
@@ -639,7 +640,7 @@ PRI DumpBufferLong(localPtr, localSize, localColumns) | localIndex
 
  
   Aux.Str(DEBUG_AUX, string("DumpBufferLong @ $"))
-  Aux.Dec(DEBUG_AUX, localPtr)
+  AuxIo.Dec(DEBUG_AUX, localPtr)
 
   Aux.Tx(DEBUG_AUX, 11) 
   
@@ -650,7 +651,7 @@ PRI DumpBufferLong(localPtr, localSize, localColumns) | localIndex
     else
       Aux.Tx(DEBUG_AUX, 32)  
     Aux.Tx(DEBUG_AUX, "$")  
-    Aux.Hex(DEBUG_AUX, long[localPtr][localIndex], 8)
+    AuxIo.Hex(DEBUG_AUX, long[localPtr][localIndex], 8)
 
 PUB FindString(firstStr, stringIndex)      '' Called from DebugCog
 '' Finds start address of one string in a list
@@ -680,7 +681,7 @@ PUB SafeTx(character)
     other:
       Aux.Tx(DEBUG_AUX, "<")
       Aux.Tx(DEBUG_AUX, "$")
-      Aux.Hex(DEBUG_AUX, character, 2)
+      AuxIo.Hex(DEBUG_AUX, character, 2)
       Aux.Tx(DEBUG_AUX, ">")
       
 PRI Parse                                               '' Parse the command in the input buffer
@@ -853,7 +854,7 @@ PRI Rx(serialDriver)
     'Aux.E
   else
     'Com.Lock  
-    result := Com.Rx(MASTER_COM)
+    '''result := Com.Rx(MASTER_COM)
     'Com.E
     
 PRI SendResponse(serialDriver)  '' Transmit the string in the output buffer and clear the buffer
@@ -864,8 +865,8 @@ PRI SendResponse(serialDriver)  '' Transmit the string in the output buffer and 
     Aux.Str(DEBUG_AUX, @prompt)       ' Transmit the prompt
   else
     'Com.Lock
-    Com.Str(MASTER_COM, @outputBuffer)  ' Transmit the buffer contents
-    Com.Str(MASTER_COM, @prompt)       ' Transmit the prompt
+    '''Com.Str(MASTER_COM, @outputBuffer)  ' Transmit the buffer contents
+    '''Com.Str(MASTER_COM, @prompt)       ' Transmit the prompt
   inputIndex := 0               ' Clear the buffers
   '** Why clear inputIndex here?
   
@@ -992,7 +993,7 @@ PUB Say(messageId, value)
   Aux.Tx(EMIC_AUX, "S")
   Aux.Str(EMIC_AUX, FindString(@introEmic, messageId))
   if value <> posx
-    Aux.Dec(EMIC_AUX, value)
+    AuxIo.Dec(EMIC_AUX, value)
   Aux.Tx(EMIC_AUX, 13)
 
   result := Aux.Rx(EMIC_AUX)
@@ -1166,8 +1167,8 @@ PUB GetLaserRange | inputcharacter
   Aux.Str(DEBUG_AUX, string(11, 13, "Start of GetLaserRange method."))
   'dira[SR02_TRIGGER_PIN] := 1
   'Aux.E
-  'Aux.Tx(SR02_AUX, "D")
-  Com.Tx(0, "D")
+  Aux.Tx(SR02_AUX, "D")
+  'Com.Tx(0, "D")
   Aux.Str(DEBUG_AUX, string(11, 13, "After Tx call."))
   if debugFlag
     Aux.Str(DEBUG_AUX, string(11, 13, "GetLaserRange"))
@@ -1176,8 +1177,8 @@ PUB GetLaserRange | inputcharacter
   repeat
     'if debugFlag
       'Aux.Str(DEBUG_AUX, string(11, 13, "Before RxTime Call.")) 
-    'inputcharacter := Aux.RxTime(SR02_AUX, 100)
-    inputcharacter := Com.RxTime(0, 100)
+    inputcharacter := Aux.RxTime(SR02_AUX, 100)
+    'inputcharacter := Com.RxTime(0, 100)
     'inputcharacter := Aux.RxCheck(SR02_AUX)
     'Aux.Str(DEBUG_AUX, string(11, 13, "After RxTime Call.")) 
     if debugFlag
@@ -1189,21 +1190,21 @@ PUB GetLaserRange | inputcharacter
   until inputcharacter == 13 or inputcharacter == -1
   if debugFlag
     Aux.Str(DEBUG_AUX, string(11, 13, "laserRange = "))
-    Aux.Dec(DEBUG_AUX, result)
+    AuxIo.Dec(DEBUG_AUX, result)
 
 PUB GetPing(numberOfSensors, pointer)
 '' Is this method really needed?
 '' Yes, it will eventually do more.
   Aux.Str(DEBUG_AUX, string(11, 13, "GetPing("))
-  Aux.Dec(DEBUG_AUX, numberOfSensors)
+  AuxIo.Dec(DEBUG_AUX, numberOfSensors)
   Aux.Str(DEBUG_AUX, string(", $"))
-  Aux.Hex(DEBUG_AUX, pointer, 4)
+  AuxIo.Hex(DEBUG_AUX, pointer, 4)
   Aux.Tx(DEBUG_AUX, ")")
   ' ** currently this code is useless
   'Aux.Str(DEBUG_AUX, string(11, 13, "pingNew = "))
-  'Aux.Dec(DEBUG_AUX, pingNew[0])
+  'AuxIo.Dec(DEBUG_AUX, pingNew[0])
   'Aux.Str(DEBUG_AUX, string(", "))
-  'Aux.Dec(DEBUG_AUX, pingNew[1])
+  'AuxIo.Dec(DEBUG_AUX, pingNew[1])
    
 
 PUB DivideWithRound(numerator, denominator)
