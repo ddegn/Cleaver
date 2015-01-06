@@ -7,7 +7,7 @@ The Object "CleaverSlave.spin" will be used on a second Propeller board. This se
 
 The "Cleaver.spin" code uses many of the same objects and methods used by the Eddie firmware. The "Cleaver.spin" and "CleaverSlave.spin" objects will be used with the same robot I'm using to test the Eddie firmware.
 
-As of today (January 3, 2015) the two objects do not communicate with each other nor does the code presently allow one to control a robot.
+As of today (January 6, 2015) the two objects do not communicate with each other.
 
 I've calling the robot this code will be used on "Cleaver". I have a robot page on Let's Make Robots where photos and videos of this robot have been posted. Here's a the link:
 http://letsmakerobots.com/robot/project/eddies-friend-cleaver
