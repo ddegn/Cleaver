@@ -203,6 +203,14 @@ CON
   MIDDLE_PAN_PORT = 2000
   MIDDLE_PAN_CENTER = 1480
   MIDDLE_PAN_STARBOARD = 1000
+
+  'ACCELERATION_SLOPE_PAN = -50
+  'ACCELERATION_SLOPE_TILT = 50
+  SPEED_SLOPE_PAN = -50
+  SPEED_SLOPE_TILT = 50
+  POINT_SPEED_LIMIT = 20
+  'ACCELERATION_MAX_PAN = 10
+  'ACCELERATION_MAX_TILT = 10
   
   #0, PORT_PAN_SERVO, PORT_TILT_SERVO, MIDDLE_PAN_SERVO, MIDDLE_TILT_SERVO
       STARBOARD_PAN_SERVO, STARBOARD_TILT_SERVO, ALL_SERVOS, PAN_SERVOS, TILT_SERVOS
@@ -330,6 +338,12 @@ CON '' EasyVR Constants
   ' numericInputType enumeration
   #0, NO_NUMERIC_INPUT, FIXED_DIGIT_INPUT, TEN_TERMINATED_INPUT
   
+  ' lrfServoMode enumeration
+  #0, AUTO_LRF_MODE, NUNCHUCK_LRF_MODE, MASTER_CONTROL_LRF_MODE
+
+  ' sensorServoMode enumeration
+  #0, AUTO_SERVO_MODE, NUNCHUCK_SERVO_MODE, MASTER_CONTROL_SERVO_MODE
+
 CON '' Cog Usage
 {{
   The objects, "Com", "Aux", "Ping" and "Servo" each start
@@ -373,11 +387,20 @@ VAR
   long mainLoopCount, laserLock
   long laserServos[4], laserDistance
   long laserTargetX, laserTargetY, laserTargetZ
-  
+  long previousServoPosition[NUMBER_OF_SERVOS]
+  long joyX, joyY
+  long nunchuckAcceleration[3]
+  long nuchuckIdPtr
+  long pointSpeed[2], pointAcceleration[2]
+  long panDegrees10, tiltDegrees10
   byte pingsInUse, maxPingIndex
   byte inputBuffer[BUFFER_LENGTH], outputBuffer[BUFFER_LENGTH] 
   byte inputIndex, parseIndex, outputIndex
   byte pingPauseFlag
+  byte previouslrfServoMode, lrfServoMode, sensorMode
+  byte rightX, rightY, nunchuckButton, previousButton
+  byte badDataFlag, nunchuckReadyFlag, nunchuckReceiverConnectedFlag
+  
        
 DAT '' variables which my have non-zero initial values
 
@@ -440,6 +463,8 @@ activeServo                     byte 6
 servoPins                       byte PORT_PAN_PIN, PORT_TILT_PIN
                                 byte MIDDLE_PAN_PIN, MIDDLE_TILT_PIN
                                 byte STARBOARD_PAN_PIN, STARBOARD_TILT_PIN
+
+sensorServoMode                 byte AUTO_SERVO_MODE
                                 
 OBJ                             
                                 
@@ -457,6 +482,8 @@ OBJ
   Servo : "Servo32v9Shared"                             ' uses one cog
 
   Leds : "jm_max7219c"
+  
+  Nunchuck : "jm_nunchuk_ez_v3"
   
   Format : "StrFmt"             ' same formatting code used by serial object so
                                 ' so adding this doesn't cost us any RAM.
@@ -499,7 +526,8 @@ PUB Main
   servoDataPtr := InitializeServos(DEFAULT_SERVO_INIT_DELAY)
 
   F32.Start
-  
+  Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
+
   cognew(ServoControl, @servoControlStack)   
   'activeParameter := @targetPower[RIGHT_MOTOR]
   'activeParTxtPtr := @targetPowerRTxt
@@ -521,6 +549,9 @@ PUB MainLoop | rxcheck, lastDebugTime
     
     laserDistance := GetLaserRange
     'Aux.Str(DEBUG_AUX, string(11, 13, "After GetLaserRange call."))
+
+    GetNunchuckData
+    
     if laserDistance <> Header#INVALID_LASER_READING
       CalculateLaserPosition(laserDistance, @laserTargetX)
       'Com.Str(string("LSR "))
@@ -702,9 +733,35 @@ PUB DisplayLaserData
   AuxIo.Dec(DEBUG_AUX, laserTargetY)
   Aux.Str(DEBUG_AUX, string(", "))
   AuxIo.Dec(DEBUG_AUX, laserTargetZ)
-  Leds.Dec(2, laserTargetX) 
-  Leds.Dec(1, laserTargetY) 
-  Leds.Dec(0, laserTargetZ) 
+  'Leds.Dec(2, laserTargetX) 
+  'Leds.Dec(1, laserTargetY) 
+  'Leds.Dec(0, laserTargetZ)
+  'Leds.DecSmall(4, laserTargetX, 0) 
+  Leds.DecSmall(4, laserTargetX, 0) 
+  Leds.DecSmall(5, laserDistance, 2)
+  Leds.DecSmall(2, laserTargetY, 0) 
+  Leds.DecSmall(0, laserTargetZ, 0)
+  Leds.DecSmall(3, panDegrees10, 1) 
+  Leds.DecSmall(1, tiltDegrees10, 1) 
+ 
+  Aux.Str(DEBUG_AUX, string(11, 13, "Pan  = "))
+  AuxIo.DecDp(DEBUG_AUX, panDegrees10, 1)
+  Aux.Str(DEBUG_AUX, string(" degrees from forward, "))
+  Aux.Str(DEBUG_AUX, string(11, 13, "Tilt = "))
+  AuxIo.DecDp(DEBUG_AUX, tiltDegrees10, 1)
+  Aux.Str(DEBUG_AUX, string(" degrees down from level"))  
+
+  'NO_DECIMAL_POINT
+  
+  {Leds.DecSmall(0, 1234) 
+  Leds.DecSmall(1, 111) 
+  Leds.DecSmall(2, 222)
+  Leds.DecSmall(3, 333) 
+  Leds.DecSmall(4, 444) 
+  Leds.DecSmall(5, 555) }
+  '4,5
+  '2,3
+  '0,1 
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
   AuxIo.Dec(DEBUG_AUX, laserServos[0])
   Aux.Str(DEBUG_AUX, string(" & "))
@@ -717,7 +774,16 @@ PUB DisplayLaserData
   AuxIo.Dec(DEBUG_AUX, laserServos[3])
   Aux.Str(DEBUG_AUX, string(", ave = "))
   AuxIo.Dec(DEBUG_AUX, (laserServos[1] + laserServos[3]) / 2)
-
+  Aux.Str(DEBUG_AUX, string(11, 13, "Accel & Speed Pan  = "))
+  AuxIo.Dec(DEBUG_AUX, pointAcceleration[0])
+  Aux.Str(DEBUG_AUX, string(", "))
+  AuxIo.Dec(DEBUG_AUX, pointSpeed[0])
+  Aux.Str(DEBUG_AUX, string(11, 13, "Accel & Speed Tilt = "))
+  AuxIo.Dec(DEBUG_AUX, pointAcceleration[1])
+  Aux.Str(DEBUG_AUX, string(", "))
+  AuxIo.Dec(DEBUG_AUX, pointSpeed[1])
+  
+  
 PUB PingStackDebug(port)
 
   Aux.Str(DEBUG_AUX, string(11, 13, "Ping Stack = ", 11, 13))
@@ -1108,10 +1174,27 @@ PRI ServoControl | nextCnt
   nextCnt := cnt + controlInterval
   repeat
     waitcnt(nextCnt += controlInterval)
-    AdvanceServos
-    repeat while stopServoFlag
-      nextCnt := cnt + controlInterval
+    case stopServoFlag
+      0:
+        AdvanceServos
+      other:
+        PointServos  
       
+PUB PointServos
+
+  'pointAcceleration[0] := ACCELERATION_SLOPE_PAN * joyX / SCALED_MULTIPLIER
+  'pointAcceleration[1] := ACCELERATION_SLOPE_TILT * joyY / SCALED_MULTIPLIER
+  'pointSpeed[0] := -POINT_SPEED_LIMIT #> pointSpeed[0] + pointAcceleration[0] <# POINT_SPEED_LIMIT
+  'pointSpeed[1] := -POINT_SPEED_LIMIT #> pointSpeed[1] + pointAcceleration[1] <# POINT_SPEED_LIMIT
+  pointSpeed[0] := -POINT_SPEED_LIMIT #> SPEED_SLOPE_PAN * joyX / SCALED_MULTIPLIER <# POINT_SPEED_LIMIT
+  pointSpeed[1] := -POINT_SPEED_LIMIT #> SPEED_SLOPE_TILT * joyY / SCALED_MULTIPLIER <# POINT_SPEED_LIMIT
+  
+  servoPosition[2] := servoMin[0] #> servoPosition[2] + pointSpeed[0] <# servoMax[0]
+  servoPosition[3] := servoMin[1] #> servoPosition[3] + pointSpeed[1] <# servoMax[1]
+  Servo.Set(servoPins[2], servoPosition[2])
+  Servo.Set(servoPins[3], servoPosition[3])
+  
+  'previousServoPosition
 PUB AdvanceServos
 
   repeat result from 0 to 5
@@ -1393,7 +1476,7 @@ PUB CalculateLaserPosition(distance, resultPointer) | servoAverages[2], gndD
   servoAverages[0] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(MIDDLE_PAN_CENTER - {
   } servoAverages[0]))
   servoAverages[1] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(servoAverages[1] - {
-  } MIDDLE_TILT_DOWN))
+  } MIDDLE_TILT_HORIZONTAL))
   
   distance := F32.FFloat(distance * 10)
   gndD := F32.FMul(distance, F32.Cos(servoAverages[1]))
@@ -1404,19 +1487,21 @@ PUB CalculateLaserPosition(distance, resultPointer) | servoAverages[2], gndD
   long[resultPointer][X_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Cos(servoAverages[0])))
   long[resultPointer][Y_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Sin(servoAverages[0])))
 
-
-  Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
-  AuxIo.Dec(DEBUG_AUX, laserServos[0])
-  Aux.Str(DEBUG_AUX, string(" & "))
-  AuxIo.Dec(DEBUG_AUX, laserServos[2])
-  Aux.Str(DEBUG_AUX, string(", ave = "))
-  AuxIo.Dec(DEBUG_AUX, (laserServos[0] + laserServos[2]) / 2)
-  Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
-  AuxIo.Dec(DEBUG_AUX, laserServos[1])
-  Aux.Str(DEBUG_AUX, string(" & "))
-  AuxIo.Dec(DEBUG_AUX, laserServos[3])
-  Aux.Str(DEBUG_AUX, string(", ave = "))
-  AuxIo.Dec(DEBUG_AUX, (laserServos[1] + laserServos[3]) / 2)
+  panDegrees10 := F32.FRound(F32.FMul(F32.Degrees(servoAverages[0]), 10.0))
+  tiltDegrees10 := F32.FRound(F32.FMul(F32.Degrees(servoAverages[1]), 10.0))
+  if debugFlag 
+    Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
+    AuxIo.Dec(DEBUG_AUX, laserServos[0])
+    Aux.Str(DEBUG_AUX, string(" & "))
+    AuxIo.Dec(DEBUG_AUX, laserServos[2])
+    Aux.Str(DEBUG_AUX, string(", ave = "))
+    AuxIo.Dec(DEBUG_AUX, (laserServos[0] + laserServos[2]) / 2)
+    Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
+    AuxIo.Dec(DEBUG_AUX, laserServos[1])
+    Aux.Str(DEBUG_AUX, string(" & "))
+    AuxIo.Dec(DEBUG_AUX, laserServos[3])
+    Aux.Str(DEBUG_AUX, string(", ave = "))
+    AuxIo.Dec(DEBUG_AUX, (laserServos[1] + laserServos[3]) / 2)
   
 PUB GetPing(numberOfSensors, pointer)
 '' Is this method really needed?
@@ -1438,6 +1523,140 @@ PUB DivideWithRound(numerator, denominator)
   numerator += denominator
   result := numerator / denominator
 
+PUB GetNunchuckData | localMax, localParameter[2], pointer
+'' Called by debug cog
+'' Nunchuck's coordinate system is different from robot's.
+'' 
+  if nunchuckReceiverConnectedFlag == 0
+    CheckForNunchuck
+    if nunchuckReceiverConnectedFlag == 0
+      Aux.Str(DEBUG_AUX, string(11, 13, "No Nunchuck Receiver Found")) 
+      return
+      
+  'Aux.Str(DEBUG_AUX, string(11, 13, "Before Nunchuck.Scan"))
+  Nunchuck.Scan
+  'Aux.Str(DEBUG_AUX, string(11, 13, "After Nunchuck.Scan"))
+  rightX := Nunchuck.joyx
+  rightY := Nunchuck.joyy
+  nunchuckAcceleration[0] := Nunchuck.accx
+  nunchuckAcceleration[1] := Nunchuck.accy
+  nunchuckAcceleration[2] := Nunchuck.accz
+  nunchuckButton := Nunchuck.buttons
+
+  if nunchuckAcceleration[0] == 1023 and nunchuckAcceleration[1] == 1023 and {
+    } nunchuckAcceleration[2] == 1023
+    nunchuckReadyFlag := 0
+    Aux.Str(DEBUG_AUX, string(11, 13, "No Nunchuck Transmitter Found"))
+    {targetSpeed[LEFT_MOTOR] := 0
+    targetSpeed[RIGHT_MOTOR] := 0
+    targetPower[LEFT_MOTOR] := 0
+    targetPower[RIGHT_MOTOR] := 0}
+    return
+  else
+    nunchuckReadyFlag := 1
+    
+  'DisplayTwoDataPoints(rightX * MAX_LED_INDEX / 255, GREEN, rightY * MAX_LED_INDEX / 255, RED, OFF)
+  
+  Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck = "))
+  AuxIo.Dec(DEBUG_AUX, rightX)
+  Aux.Str(DEBUG_AUX, string(", "))
+  AuxIo.Dec(DEBUG_AUX, rightY)
+  Aux.Str(DEBUG_AUX, string(" & "))
+  AuxIo.Dec(DEBUG_AUX, nunchuckAcceleration[0])
+  Aux.Str(DEBUG_AUX, string(", "))
+  AuxIo.Dec(DEBUG_AUX, nunchuckAcceleration[1])
+  Aux.Str(DEBUG_AUX, string(", "))
+  AuxIo.Dec(DEBUG_AUX, nunchuckAcceleration[2])
+  Aux.Str(DEBUG_AUX, string(" : ButtonsZC = "))
+  AuxIo.Dec(DEBUG_AUX, nunchuckButton)
+ 
+  if nunchuckButton <> previousButton and previousButton == Header#NUNCHUCK_BUTTON_NONE
+    case nunchuckButton
+      Header#NUNCHUCK_BUTTON_Z:
+        Leds.Reset
+      Header#NUNCHUCK_BUTTON_C:
+        !stopServoFlag
+        ifnot stopServoFlag
+          longfill(@pointSpeed, 0, 4)
+        'targetSpeed[LEFT_MOTOR] := 0
+        'targetSpeed[RIGHT_MOTOR] := 0
+
+  previousButton := nunchuckButton
+
+  ifnot stopServoFlag 'lrfServoMode == NUNCHUCK_LRF_MODE ' MASTER_CONTROL_LRF_MODE
+    return
+
+  case rightX
+    0..Header#CENTER_NUNCHUCK_X_MIN - 1:
+      joyX := rightX - Header#CENTER_NUNCHUCK_X_MIN
+      'joyX := ((joyX * localMax) + Header#NUNCHUCK_X_RANGE_L_HALF) / Header#NUNCHUCK_X_RANGE_LEFT 
+    Header#CENTER_NUNCHUCK_X_MIN..Header#CENTER_NUNCHUCK_X_MAX:
+      joyX := 0
+    Header#CENTER_NUNCHUCK_X_MAX + 1..Header#MAX_STICK_NUNCHUCK:
+      joyX := rightX - Header#CENTER_NUNCHUCK_X_MAX
+      'joyX := ((joyX * localMax) + Header#NUNCHUCK_X_RANGE_R_HALF) / Header#NUNCHUCK_X_RANGE_RIGHT
+  case rightY
+    0..Header#CENTER_NUNCHUCK_Y_MIN - 1:
+      joyY := rightY - Header#CENTER_NUNCHUCK_Y_MIN
+      'joyY := ((joyY * localMax) + Header#NUNCHUCK_Y_RANGE_R_HALF) / Header#NUNCHUCK_Y_RANGE_REVERSE
+    Header#CENTER_NUNCHUCK_Y_MIN..Header#CENTER_NUNCHUCK_Y_MAX:
+      joyY := 0
+    Header#CENTER_NUNCHUCK_Y_MAX + 1..Header#MAX_STICK_NUNCHUCK:
+      joyY := rightY - Header#CENTER_NUNCHUCK_Y_MAX
+      'joyY := ((joyY * localMax) + Header#NUNCHUCK_Y_RANGE_F_HALF) / Header#NUNCHUCK_Y_RANGE_FORWARD
+      
+  {' *** speed isn't computed yet 
+  'targetSpeed[LEFT_MOTOR] := -MAX_RC_SPEED #> joyY + joyX <# MAX_RC_SPEED
+  'targetSpeed[RIGHT_MOTOR] := -MAX_RC_SPEED #> joyY - joyX <# MAX_RC_SPEED
+  'targetSpeed[LEFT_MOTOR] := joyY + joyX
+  'targetSpeed[RIGHT_MOTOR] := joyY - joyX
+  localParameter[LEFT_MOTOR] := joyY + joyX
+  localParameter[RIGHT_MOTOR] := joyY - joyX     }
+    
+ 
+  Aux.Str(DEBUG_AUX, string(11, 13, "joy = "))
+  AuxIo.Dec(DEBUG_AUX, joyX)
+  Aux.Str(DEBUG_AUX, string(", "))
+  AuxIo.Dec(DEBUG_AUX, joyY)
+
+  {Aux.Str(DEBUG_AUX, string(", localParameter = "))
+  AuxIo.Dec(DEBUG_AUX, localParameter[LEFT_MOTOR])
+  Aux.Str(DEBUG_AUX, string(", "))
+  AuxIo.Dec(DEBUG_AUX, localParameter[RIGHT_MOTOR])
+  if ||localParameter[LEFT_MOTOR] > localMax or ||localParameter[RIGHT_MOTOR] > localMax
+    localParameter[LEFT_MOTOR] := -localMax #> localParameter[LEFT_MOTOR] <# localMax
+    localParameter[RIGHT_MOTOR] := -localMax #> localParameter[RIGHT_MOTOR] <# localMax
+    Aux.Str(DEBUG_AUX, string(", limited = "))
+    AuxIo.Dec(DEBUG_AUX, localParameter[LEFT_MOTOR])
+    Aux.Str(DEBUG_AUX, string(", "))
+    AuxIo.Dec(DEBUG_AUX, localParameter[RIGHT_MOTOR])
+    
+    'result := pauseForRxFlag
+    'pauseForRxFlag := 1
+    'PauseForRx
+    'pauseForRxFlag := result
+    
+  longmove(pointer, @localParameter, 2)
+          }
+PUB CheckForNunchuck
+
+  Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
+  Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck ID = ", QUOTE))   
+  SafeDebug(nuchuckIdPtr, 4)
+  Aux.Tx(DEBUG_AUX, QUOTE) 
+  if long[nuchuckIdPtr] == Header#VALID_NUNCHUCK_ID '$04C4B400
+    nunchuckReceiverConnectedFlag := 1
+  
+PUB CheckPointedUp
+
+  if nunchuckAcceleration[Header#Y_ACCEL] < Header#NUNCHUCK_UP_THRESHOLD
+    result := true
+
+PUB CheckPointedDown
+
+  if nunchuckAcceleration[Header#Y_ACCEL] > Header#NUNCHUCK_DOWN_THRESHOLD
+    result := true
+  
 DAT
 
 prompt                          byte CR, 0
