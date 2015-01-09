@@ -456,6 +456,8 @@ OBJ
   
   Servo : "Servo32v9Shared"                             ' uses one cog
 
+  Leds : "jm_max7219c"
+  
   Format : "StrFmt"             ' same formatting code used by serial object so
                                 ' so adding this doesn't cost us any RAM.
   
@@ -475,8 +477,8 @@ PUB Main
   'Aux.AddPort(EASY_VR_AUX, Header#EASY_VR_RX, Header#EASY_VR_TX, -1, -1, Com#DEFAULTTHRESHOLD, 0, Header#EASY_VR_BAUD)
   Aux.Start                                         'Start the ports    
  
+  Leds.init(Header#SEVEN_SEGMENT_LATCH, Header#SEVEN_SEGMENT_DATA, Header#SEVEN_SEGMENT_CLOCK, 3, 2)
   
-
   longfill(@pingStack, FILL_LONG, PING_STACK_SIZE)
   Ping.Start(pingMask, pingInterval, @pingResults)
   ' Continuously trigger and read pulse widths on PING))) pins
@@ -493,7 +495,7 @@ PUB Main
     Aux.Tx(DEBUG_AUX, 7)
     waitcnt(clkfreq / 4 + cnt)
     Aux.Tx(DEBUG_AUX, 7)
- 
+
   servoDataPtr := InitializeServos(DEFAULT_SERVO_INIT_DELAY)
 
   F32.Start
@@ -700,7 +702,9 @@ PUB DisplayLaserData
   AuxIo.Dec(DEBUG_AUX, laserTargetY)
   Aux.Str(DEBUG_AUX, string(", "))
   AuxIo.Dec(DEBUG_AUX, laserTargetZ)
-
+  Leds.Dec(2, laserTargetX) 
+  Leds.Dec(1, laserTargetY) 
+  Leds.Dec(0, laserTargetZ) 
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
   AuxIo.Dec(DEBUG_AUX, laserServos[0])
   Aux.Str(DEBUG_AUX, string(" & "))
@@ -1373,23 +1377,47 @@ PUB GetLaserRange | inputcharacter, newData
     Aux.Str(DEBUG_AUX, string(11, 13, "laserRange = "))
     AuxIo.Dec(DEBUG_AUX, result)
 
-PUB CalculateLaserPosition(distance, resultPointer) | servoAverages[2]
+PUB CalculateLaserPosition(distance, resultPointer) | servoAverages[2], gndD
 
+  Aux.Str(DEBUG_AUX, string(11, 13, "CalculateLaserPosition, distance  = "))
+  AuxIo.Dec(DEBUG_AUX, distance)
+  Aux.Str(DEBUG_AUX, string(" cm"))   
   repeat result from 0 to 1
     servoAverages[result] := (laserServos[result] + laserServos[result + 2]) / 2
 
+  {servoAverages[0] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(MIDDLE_PAN_CENTER - {
+  } servoAverages[0]))
+  servoAverages[1] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(servoAverages[1] - {
+  } MIDDLE_TILT_DOWN))
+  }
   servoAverages[0] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(MIDDLE_PAN_CENTER - {
   } servoAverages[0]))
   servoAverages[1] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(servoAverages[1] - {
   } MIDDLE_TILT_DOWN))
   
   distance := F32.FFloat(distance * 10)
-  distance := F32.FMul(distance, F32.Cos(servoAverages[1]))
+  gndD := F32.FMul(distance, F32.Cos(servoAverages[1]))
+  {long[resultPointer][Z_DIMENSION] := F32.FRound(F32.FSub(Header#F_LASER_HEIGHT, F32.FMul(distance, {
+  } F32.Sin(servoAverages[1]))))}
   long[resultPointer][Z_DIMENSION] := F32.FRound(F32.FSub(Header#F_LASER_HEIGHT, F32.FMul(distance, {
   } F32.Sin(servoAverages[1]))))
   long[resultPointer][X_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Cos(servoAverages[0])))
   long[resultPointer][Y_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Sin(servoAverages[0])))
- 
+
+
+  Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
+  AuxIo.Dec(DEBUG_AUX, laserServos[0])
+  Aux.Str(DEBUG_AUX, string(" & "))
+  AuxIo.Dec(DEBUG_AUX, laserServos[2])
+  Aux.Str(DEBUG_AUX, string(", ave = "))
+  AuxIo.Dec(DEBUG_AUX, (laserServos[0] + laserServos[2]) / 2)
+  Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
+  AuxIo.Dec(DEBUG_AUX, laserServos[1])
+  Aux.Str(DEBUG_AUX, string(" & "))
+  AuxIo.Dec(DEBUG_AUX, laserServos[3])
+  Aux.Str(DEBUG_AUX, string(", ave = "))
+  AuxIo.Dec(DEBUG_AUX, (laserServos[1] + laserServos[3]) / 2)
+  
 PUB GetPing(numberOfSensors, pointer)
 '' Is this method really needed?
 '' Yes, it will eventually do more.

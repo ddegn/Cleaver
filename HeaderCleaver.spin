@@ -56,8 +56,11 @@ CON '' Slave Pin Assignments
   SR02_RX = 11
   SR02_TX = 10
   
-  SR02_TRIGGER_PIN = 10
-
+  'SR02_TRIGGER_PIN = 10
+  SEVEN_SEGMENT_DATA = 16
+  SEVEN_SEGMENT_LATCH = 17
+  SEVEN_SEGMENT_CLOCK = 18
+  
   SLAVE_USB_BAUD = 9_600 '115_200                                   
   EASY_VR_BAUD = 9_600
   EMIC_BAUD = 9_600
