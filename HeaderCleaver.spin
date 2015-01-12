@@ -64,12 +64,20 @@ CON '' Slave Pin Assignments
   WII_CLOCK_SLAVE = 28
   WII_DATA_SLAVE = 29
   
-  SLAVE_USB_BAUD = 9_600 '115_200                                   
+  SLAVE_USB_BAUD = 19200 '9_600 '115_200                                   
   EASY_VR_BAUD = 9_600
   EMIC_BAUD = 9_600
   SR02_BAUD = 9_600
 
   INITIAL_PING = |< PING_0 | |< PING_1                
+
+  CALIBRATION_VERSION_EEPROM = $8000
+ 
+  #0, NO_LED, START_CAL_LED 
+
+  SEVEN_SEGMENTS_IN_USE = 3
+
+  DEFAULT_7_SEGMENT_BRIGHTNESS = 2
   
 CON 
  
