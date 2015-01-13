@@ -19,6 +19,7 @@ CON
   ' Settings
   BUFFER_LENGTH = 255           ' Input Buffer Length must fit within input/output 'Index' ranges (currently a byte)
   LASER_BUFFER = 16
+  MEDIAN_BUFFER = 8
   MAX_LASER_BUFFER_INDEX = LASER_BUFFER - 1
   SCALED_MULTIPLIER = 1000
   SCALED_TAU = 6_283            ' circumfrence / radius
@@ -219,7 +220,7 @@ CON
   'ACCELERATION_MAX_PAN = 10
   'ACCELERATION_MAX_TILT = 10
 
-  CALIBRATION_VERSION = 15_01_09_1
+  CALIBRATION_VERSION = 15_01_09_3
 
   ' calibrationStatus enumerarion
   #0, NO_LOWER_DATA, NEW_LOW_NO_HIGH_CAL_DATA, NEW_LOW_OLD_HIGH_CAL_DATA, IDENTICAL_CAL_DATA, {
@@ -445,6 +446,7 @@ VAR
   long scanZMinIndex, scanZMaxIndex, scanZAbsMin, scanZAbsMax
   long scanZMinPan, scanZMaxPan
   long scanZMinTilt, scanZMaxTilt, scanZAveScan
+  long comparisons, swaps, medianBuffer[MEDIAN_BUFFER]
   
   byte pingsInUse, maxPingIndex
   byte inputBuffer[BUFFER_LENGTH], outputBuffer[BUFFER_LENGTH] 
@@ -454,7 +456,7 @@ VAR
   byte rightX, rightY, nunchuckButton, previousButton
   byte badDataFlag, nunchuckReadyFlag, nunchuckReceiverConnectedFlag
   byte rawLaserInput[LASER_BUFFER]
-  byte menuSelect
+  byte menuSelect, medianBufferByte[MEDIAN_BUFFER]
        
 DAT '' variables which my have non-zero initial values
 
@@ -563,8 +565,8 @@ OBJ
 
   F32 : "F32"
                                                         ' uses one cog
-  Aux : "FullDuplexSerial4port"                         ' uses one cog
-  AuxIo : "DataIo4Port"
+  'Aux : "FullDuplexSerial4port"                         ' uses one cog
+  Aux : "DataIo4PortLocks"
   Ping : "EddiePingMonitor"                             ' uses one cog
   
   Servo : "Servo32v9Shared"                             ' uses one cog
@@ -593,7 +595,20 @@ PUB Main
   Aux.AddPort(SR02_AUX, Header#SR02_RX, Header#SR02_TX, -1, -1, Aux#DEFAULTTHRESHOLD, 0, Header#SR02_BAUD)
   'Aux.AddPort(EASY_VR_AUX, Header#EASY_VR_RX, Header#EASY_VR_TX, -1, -1, Com#DEFAULTTHRESHOLD, 0, Header#EASY_VR_BAUD)
   Aux.Start                                         'Start the ports    
- 
+  Aux.SetLock
+  {Aux.Rx(DEBUG_AUX)
+  result := LongMedian(@testData, 8)
+  Aux.Str(DEBUG_AUX, string(11, 13, "LongMedian := "))
+  Aux.Dec(DEBUG_AUX, result)
+   
+  Aux.Str(DEBUG_AUX, string(11, 13, "comparisons := "))
+  Aux.Dec(DEBUG_AUX, comparisons)
+  Aux.Str(DEBUG_AUX, string(", swaps := "))
+  Aux.Dec(DEBUG_AUX, swaps)
+   
+  repeat }
+
+  
   Leds.init(Header#SEVEN_SEGMENT_LATCH, Header#SEVEN_SEGMENT_DATA, {
   } Header#SEVEN_SEGMENT_CLOCK, Header#SEVEN_SEGMENTS_IN_USE, sevenSegmentBrightness)
   
@@ -633,7 +648,7 @@ PUB MainLoop | rxcheck, lastDebugTime
   repeat
     mainLoopCount++
     'Aux.Str(DEBUG_AUX, string(11, 13, "mainLoopCount"))
-    'AuxIo.Dec(DEBUG_AUX, mainLoopCount) 
+    'Aux.Dec(DEBUG_AUX, mainLoopCount) 
     result := CheckSerial
     DigestCharacter(result)
 
@@ -740,7 +755,7 @@ PUB DigestCharacter(localCharacter)
       1..BEL, 10..12, 14..31, 127..255 :            ' Ignore invalid characters
         if debugFlag => INPUT_WARNINGS_DEBUG
           Aux.Str(DEBUG_AUX, string(11, 13, 7, "Invalid Character Error = <$"))
-          AuxIo.Hex(DEBUG_AUX, localCharacter, 2)
+          Aux.Hex(DEBUG_AUX, localCharacter, 2)
           Aux.Tx(DEBUG_AUX, ">")
           inputIndex--
           waitcnt(clkfreq / 2 + cnt)
@@ -766,16 +781,16 @@ PRI TempDebug
   Aux.Str(DEBUG_AUX, string(11, 13, "CleaverSlave"))
 
   Aux.Str(DEBUG_AUX, string(", mode = "))
-  AuxIo.Dec(DEBUG_AUX, mode)
+  Aux.Dec(DEBUG_AUX, mode)
   Aux.Str(DEBUG_AUX, string(" = "))
   Aux.Str(DEBUG_AUX, FindString(@modeAsText, mode)) 
       'controlSerialTxt
   Aux.Str(DEBUG_AUX, string(11, 13, "activeParameter = "))
   Aux.Str(DEBUG_AUX, activeParTxtPtr)  
   Aux.Str(DEBUG_AUX, string(" = "))
-  AuxIo.Dec(DEBUG_AUX, long[activeParameter])   
+  Aux.Dec(DEBUG_AUX, long[activeParameter])   
   Aux.Str(DEBUG_AUX, string(11, 13, "mainLoopCount = "))
-  AuxIo.Dec(DEBUG_AUX, mainLoopCount)  
+  Aux.Dec(DEBUG_AUX, mainLoopCount)  
   DisplayServoData
 
   DisplayLaserData
@@ -783,16 +798,16 @@ PRI TempDebug
    {
   if debugFlag => PING_DEBUG
     Aux.Str(DEBUG_AUX, string(11, 13, "pingCount = "))
-    AuxIo.Dec(DEBUG_AUX, pingCount)
+    Aux.Dec(DEBUG_AUX, pingCount)
     Aux.Str(DEBUG_AUX, string(", pingMask = "))
-    AuxIo.Dec(DEBUG_AUX, pingMask)
+    Aux.Dec(DEBUG_AUX, pingMask)
     Aux.Str(DEBUG_AUX, string(", pingInterval = "))
-    AuxIo.Dec(DEBUG_AUX, pingInterval)
+    Aux.Dec(DEBUG_AUX, pingInterval)
     
     Aux.Str(DEBUG_AUX, string(", pingResults = "))
-    AuxIo.Dec(DEBUG_AUX, pingResults[0])
+    Aux.Dec(DEBUG_AUX, pingResults[0])
     Aux.Str(DEBUG_AUX, string(", "))
-    AuxIo.Dec(DEBUG_AUX, pingResults[1])
+    Aux.Dec(DEBUG_AUX, pingResults[1])
    }
   'PingStackDebug(port) 
                 
@@ -804,13 +819,13 @@ PUB DisplayServoData
   Aux.Str(DEBUG_AUX, string(11, 13, "DisplayServoData"))  
   repeat result from 0 to 5
     Aux.Str(DEBUG_AUX, string(11, 13, "servoPosition["))
-    AuxIo.Dec(DEBUG_AUX, result)
+    Aux.Dec(DEBUG_AUX, result)
     Aux.Str(DEBUG_AUX, string("] = "))
-    AuxIo.Dec(DEBUG_AUX, servoPosition[result]) 
+    Aux.Dec(DEBUG_AUX, servoPosition[result]) 
     Aux.Str(DEBUG_AUX, string(", servoPeriod = "))
-    AuxIo.Dec(DEBUG_AUX, servoPeriod[result]) 
+    Aux.Dec(DEBUG_AUX, servoPeriod[result]) 
     Aux.Str(DEBUG_AUX, string(", servoPhase = "))
-    AuxIo.Dec(DEBUG_AUX, servoPhase[result]) 
+    Aux.Dec(DEBUG_AUX, servoPhase[result]) 
        
 PUB DisplayLaserData
 
@@ -818,17 +833,17 @@ PUB DisplayLaserData
     Aux.Str(DEBUG_AUX, string(11, 13, "Laser Data Invalid"))
     return
   Aux.Str(DEBUG_AUX, string(11, 13, "laserDistance = "))
-  AuxIo.Dec(DEBUG_AUX, laserDistance) 
+  Aux.Dec(DEBUG_AUX, laserDistance) 
 
   Aux.Str(DEBUG_AUX, string(11, 13, "calibrationState = "))
   Aux.Str(DEBUG_AUX, FindString(@calibrationStateAsText, calibrationState))
   
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Target (XYZ) = "))
-  AuxIo.Dec(DEBUG_AUX, laserTargetX)
+  Aux.Dec(DEBUG_AUX, laserTargetX)
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, laserTargetY)
+  Aux.Dec(DEBUG_AUX, laserTargetY)
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, laserTargetZ)
+  Aux.Dec(DEBUG_AUX, laserTargetZ)
   'Leds.Dec(2, laserTargetX) 
   'Leds.Dec(1, laserTargetY) 
   'Leds.Dec(0, laserTargetZ)
@@ -855,10 +870,10 @@ PUB DisplayLaserData
       USE_CAL:  }
       
   Aux.Str(DEBUG_AUX, string(11, 13, "Pan  = "))
-  AuxIo.DecDp(DEBUG_AUX, panDegrees10, 1)
+  Aux.DecDp(DEBUG_AUX, panDegrees10, 1)
   Aux.Str(DEBUG_AUX, string(" degrees from forward, "))
   Aux.Str(DEBUG_AUX, string(11, 13, "Tilt = "))
-  AuxIo.DecDp(DEBUG_AUX, tiltDegrees10, 1)
+  Aux.DecDp(DEBUG_AUX, tiltDegrees10, 1)
   Aux.Str(DEBUG_AUX, string(" degrees down from level"))  
 
   'NO_DECIMAL_POINT
@@ -873,11 +888,11 @@ PUB DisplayLaserData
   '2,3
   '0,1 
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
-  AuxIo.Dec(DEBUG_AUX, servoPosition[2])
+  Aux.Dec(DEBUG_AUX, servoPosition[2])
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
-  AuxIo.Dec(DEBUG_AUX, servoPosition[3])
+  Aux.Dec(DEBUG_AUX, servoPosition[3])
   Aux.Str(DEBUG_AUX, string(11, 13, "Buffer Index = "))
-  AuxIo.Dec(DEBUG_AUX, bufferIndex)
+  Aux.Dec(DEBUG_AUX, bufferIndex)
   Aux.Str(DEBUG_AUX, string(11, 13, "calibrationBuffer = "))
 
   'DisplayDZBuffer(@calibrationDBuffer, @calibrationZBuffer, CAL_GRID_SIZE)
@@ -892,78 +907,78 @@ PUB DisplayDZBuffer(DBufferPtr, ZBufferPtr, size)
       Aux.Tx(DEBUG_AUX, ",")
       Aux.Tx(DEBUG_AUX, " ")
     Aux.Tx(DEBUG_AUX, "[")
-    AuxIo.Dec(DEBUG_AUX, long[DBufferPtr][result])
+    Aux.Dec(DEBUG_AUX, long[DBufferPtr][result])
 
     Aux.Tx(DEBUG_AUX, "]")  
     Aux.Tx(DEBUG_AUX, " ")  
-    AuxIo.Dec(DEBUG_AUX, long[ZBufferPtr][result])
+    Aux.Dec(DEBUG_AUX, long[ZBufferPtr][result])
     
 PUB DisplayCalComparison
 
   Aux.Str(DEBUG_AUX, string(11, 13, "DisplayCalComparison"))
   Aux.Str(DEBUG_AUX, string(11, 13, "ZRangeMin: old = "))
-  AuxIo.Dec(DEBUG_AUX, previousZRangeMin)
+  Aux.Dec(DEBUG_AUX, previousZRangeMin)
   Aux.Str(DEBUG_AUX, string(", new = "))
-  AuxIo.Dec(DEBUG_AUX, calibrationZRangeMin)
+  Aux.Dec(DEBUG_AUX, calibrationZRangeMin)
   Aux.Str(DEBUG_AUX, string(11, 13, "ZRangeMax: old = "))
-  AuxIo.Dec(DEBUG_AUX, previousZRangeMax)
+  Aux.Dec(DEBUG_AUX, previousZRangeMax)
   Aux.Str(DEBUG_AUX, string(", new = "))
-  AuxIo.Dec(DEBUG_AUX, calibrationZRangeMax)
+  Aux.Dec(DEBUG_AUX, calibrationZRangeMax)
 
   repeat result from 0 to TILT_CAL_GAPS
     Aux.Str(DEBUG_AUX, string(11, 13, "ZMin: "))
-    AuxIo.Dec(DEBUG_AUX, previousZMin[result])
+    Aux.Dec(DEBUG_AUX, previousZMin[result])
     Aux.Str(DEBUG_AUX, string(", "))
-    AuxIo.Dec(DEBUG_AUX, calibrationZMin[result])
+    Aux.Dec(DEBUG_AUX, calibrationZMin[result])
     Aux.Str(DEBUG_AUX, string(", ZMax: "))
-    AuxIo.Dec(DEBUG_AUX, previousZMax[result])
+    Aux.Dec(DEBUG_AUX, previousZMax[result])
     Aux.Str(DEBUG_AUX, string(", "))
-    AuxIo.Dec(DEBUG_AUX, calibrationZMax[result])
+    Aux.Dec(DEBUG_AUX, calibrationZMax[result])
     Aux.Str(DEBUG_AUX, string(", ZRange: "))
-    AuxIo.Dec(DEBUG_AUX, previousZRange[result])
+    Aux.Dec(DEBUG_AUX, previousZRange[result])
     Aux.Str(DEBUG_AUX, string(", "))
-    AuxIo.Dec(DEBUG_AUX, calibrationZRange[result])
+    Aux.Dec(DEBUG_AUX, calibrationZRange[result])
     Aux.Str(DEBUG_AUX, string(", ZAve: "))
-    AuxIo.Dec(DEBUG_AUX, previousZAve[result])
+    Aux.Dec(DEBUG_AUX, previousZAve[result])
     Aux.Str(DEBUG_AUX, string(", "))
-    AuxIo.Dec(DEBUG_AUX, calibrationZAve[result])
+    Aux.Dec(DEBUG_AUX, calibrationZAve[result])
    
 PUB DisplayCalData(rangeExtremePtr, zMinPtr, zMaxPtr, zRangePtr, zAvePtr)
 
   Aux.Str(DEBUG_AUX, string(11, 13, "DisplayCalData"))
   Aux.Str(DEBUG_AUX, string(11, 13, "ZRangeMin = "))
-  AuxIo.Dec(DEBUG_AUX, long[rangeExtremePtr])
+  Aux.Dec(DEBUG_AUX, long[rangeExtremePtr])
   Aux.Str(DEBUG_AUX, string(11, 13, "ZRangeMax = "))
-  AuxIo.Dec(DEBUG_AUX, long[rangeExtremePtr][1])
+  Aux.Dec(DEBUG_AUX, long[rangeExtremePtr][1])
   if rangeExtremePtr == @scanZRangeMin
     Aux.Str(DEBUG_AUX, string(11, 13, "Over All Average = "))
-    AuxIo.Dec(DEBUG_AUX, scanZAveScan)
+    Aux.Dec(DEBUG_AUX, scanZAveScan)
     Aux.Str(DEBUG_AUX, string(11, 13, "Over All Minimum = "))
-    AuxIo.Dec(DEBUG_AUX, scanZAbsMin)
+    Aux.Dec(DEBUG_AUX, scanZAbsMin)
     Aux.Str(DEBUG_AUX, string(", # "))
-    AuxIo.Dec(DEBUG_AUX, scanZMinIndex)
+    Aux.Dec(DEBUG_AUX, scanZMinIndex)
     Aux.Str(DEBUG_AUX, string(", pan = "))
-    AuxIo.Dec(DEBUG_AUX, scanZMinPan)
+    Aux.Dec(DEBUG_AUX, scanZMinPan)
     Aux.Str(DEBUG_AUX, string(", tilt "))
-    AuxIo.Dec(DEBUG_AUX, scanZMinTilt)
+    Aux.Dec(DEBUG_AUX, scanZMinTilt)
     Aux.Str(DEBUG_AUX, string(11, 13, "Over All Maximum = "))
-    AuxIo.Dec(DEBUG_AUX, scanZAbsMax)
+    Aux.Dec(DEBUG_AUX, scanZAbsMax)
     Aux.Str(DEBUG_AUX, string(", # "))
-    AuxIo.Dec(DEBUG_AUX, scanZMaxIndex)
+    Aux.Dec(DEBUG_AUX, scanZMaxIndex)
     Aux.Str(DEBUG_AUX, string(", pan = "))
-    AuxIo.Dec(DEBUG_AUX, scanZMaxPan)
+    Aux.Dec(DEBUG_AUX, scanZMaxPan)
     Aux.Str(DEBUG_AUX, string(", tilt "))
-    AuxIo.Dec(DEBUG_AUX, scanZMaxTilt)
+    Aux.Dec(DEBUG_AUX, scanZMaxTilt)
     
   repeat result from 0 to TILT_CAL_GAPS
     Aux.Str(DEBUG_AUX, string(11, 13, "ZMin = "))
-    AuxIo.Dec(DEBUG_AUX, long[zMinPtr][result])
+    Aux.Dec(DEBUG_AUX, long[zMinPtr][result])
     Aux.Str(DEBUG_AUX, string(", ZMax = "))
-    AuxIo.Dec(DEBUG_AUX, long[zMaxPtr][result])
+    Aux.Dec(DEBUG_AUX, long[zMaxPtr][result])
     Aux.Str(DEBUG_AUX, string(", ZRange = "))
-    AuxIo.Dec(DEBUG_AUX, long[zRangePtr][result])
+    Aux.Dec(DEBUG_AUX, long[zRangePtr][result])
     Aux.Str(DEBUG_AUX, string(", ZAve = "))
-    AuxIo.Dec(DEBUG_AUX, long[zAvePtr][result])
+    Aux.Dec(DEBUG_AUX, long[zAvePtr][result])
   Aux.Tx(DEBUG_AUX, 11)
   Aux.Tx(DEBUG_AUX, 13)
        
@@ -996,10 +1011,10 @@ PUB DisplayLaserLeds
       Leds.DecSmall(1, tiltDegrees10, 1)
      
   Aux.Str(DEBUG_AUX, string(11, 13, "Pan  = "))
-  AuxIo.DecDp(DEBUG_AUX, panDegrees10, 1)
+  Aux.DecDp(DEBUG_AUX, panDegrees10, 1)
   Aux.Str(DEBUG_AUX, string(" degrees from forward, "))
   Aux.Str(DEBUG_AUX, string(11, 13, "Tilt = "))
-  AuxIo.DecDp(DEBUG_AUX, tiltDegrees10, 1)
+  Aux.DecDp(DEBUG_AUX, tiltDegrees10, 1)
   Aux.Str(DEBUG_AUX, string(" degrees down from level"))
   'menuSelect nunchuckButton
    {saveCalLed0                     byte $02, Leds#_C, Leds#DASH, Leds#_S, Leds#_A, Leds#_u, Leds#_E, 0
@@ -1098,7 +1113,7 @@ PUB DumpBuffer(bufferPtr, bufferSize, interestedLocationPtr, offset) : localInde
   repeat localIndex from 0 to bufferSize
     if long[interestedLocationPtr] - offset == localIndex
       Aux.Tx(DEBUG_AUX, "*")
-    AuxIo.Dec(DEBUG_AUX, long[bufferPtr][localIndex])
+    Aux.Dec(DEBUG_AUX, long[bufferPtr][localIndex])
     
     if localIndex // 8 == 7 and localIndex <> bufferSize
       Aux.Tx(DEBUG_AUX, 11)
@@ -1111,7 +1126,7 @@ PRI DumpBufferLong(localPtr, localSize, localColumns) | localIndex
 
  
   Aux.Str(DEBUG_AUX, string("DumpBufferLong @ $"))
-  AuxIo.Dec(DEBUG_AUX, localPtr)
+  Aux.Dec(DEBUG_AUX, localPtr)
 
   Aux.Tx(DEBUG_AUX, 11) 
   
@@ -1122,7 +1137,7 @@ PRI DumpBufferLong(localPtr, localSize, localColumns) | localIndex
     else
       Aux.Tx(DEBUG_AUX, 32)  
     Aux.Tx(DEBUG_AUX, "$")  
-    AuxIo.Hex(DEBUG_AUX, long[localPtr][localIndex], 8)
+    Aux.Hex(DEBUG_AUX, long[localPtr][localIndex], 8)
 
 PUB FindString(firstStr, stringIndex)      '' Called from DebugCog
 '' Finds start address of one string in a list
@@ -1152,7 +1167,7 @@ PUB SafeTx(character)
     other:
       Aux.Tx(DEBUG_AUX, "<")
       Aux.Tx(DEBUG_AUX, "$")
-      AuxIo.Hex(DEBUG_AUX, character, 2)
+      Aux.Hex(DEBUG_AUX, character, 2)
       Aux.Tx(DEBUG_AUX, ">")
       
 PRI Parse                                               '' Parse the command in the input buffer
@@ -1466,7 +1481,7 @@ PUB Say(messageId, value)
   Aux.Tx(EMIC_AUX, "S")
   Aux.Str(EMIC_AUX, FindString(@introEmic, messageId))
   if value <> posx
-    AuxIo.Dec(EMIC_AUX, value)
+    Aux.Dec(EMIC_AUX, value)
   Aux.Tx(EMIC_AUX, 13)
 
   result := Aux.Rx(EMIC_AUX)
@@ -1474,6 +1489,7 @@ PUB Say(messageId, value)
 PRI ServoControl | nextCnt
 
 
+  
   Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
   I2c.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
   
@@ -1610,7 +1626,7 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
   targetPosition[3] := calibrationTiltMax
   
   MoveServosQuietly(@targetPosition, 100)
-
+  
   repeat tiltIndex from 0 to TILT_CAL_GAPS
     targetPosition[3] := calibrationTiltMax - (tiltIndex * calibrationTiltSlope / {
     } SCALED_MULTIPLIER)
@@ -1627,9 +1643,9 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
     if debugFlag => SERVO_COG_DEBUG
-      AuxIo.Dec(DEBUG_AUX, bufferIndex)
+      Aux.Dec(DEBUG_AUX, bufferIndex)
       Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-      AuxIo.Dec(DEBUG_AUX, tiltIndex)    
+      Aux.Dec(DEBUG_AUX, tiltIndex)    
     repeat panIndex from 0 to PAN_CAL_GAPS
       if forwardPanFlag
         targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
@@ -1642,17 +1658,19 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
         bufferIndex--
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
-        AuxIo.Dec(DEBUG_AUX, bufferIndex)
+        Aux.Dec(DEBUG_AUX, bufferIndex)
         Aux.Str(DEBUG_AUX, string(", panIndex = ")) 
-        AuxIo.Dec(DEBUG_AUX, panIndex)
+        Aux.Dec(DEBUG_AUX, panIndex)
         Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-        AuxIo.Dec(DEBUG_AUX, tiltIndex)
+        Aux.Dec(DEBUG_AUX, tiltIndex)
         Aux.Str(DEBUG_AUX, string(", forwardPanFlag = ")) 
-        AuxIo.Dec(DEBUG_AUX, forwardPanFlag)
+        Aux.Dec(DEBUG_AUX, forwardPanFlag)
       
       MoveServosQuietly(@targetPosition, moveCycles[0])
       QuietTiltServo
       laserDistance := GetLaserRange
+      'laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
+      
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
         Aux.Str(DEBUG_AUX, @rawLaserInput) 
@@ -1670,21 +1688,25 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
         calibrationZAve[tiltIndex] += laserTargetZ  
       else
         laserTargetZ := Header#INVALID_LASER_READING
+        if debugFlag => SERVO_COG_DEBUG
+          Aux.Str(DEBUG_AUX, string(7, 11, 13, 7, "********* Invalid rawLaserInput = ")) 
+          Aux.Str(DEBUG_AUX, @rawLaserInput)
+          Aux.Str(DEBUG_AUX, string(7, 7, " **********", 7, 7))
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
-        AuxIo.Dec(DEBUG_AUX, laserDistance)    
+        Aux.Dec(DEBUG_AUX, laserDistance)    
         Aux.Str(DEBUG_AUX, string(", laserTargetZ = ")) 
-        AuxIo.Dec(DEBUG_AUX, laserTargetZ)
+        Aux.Dec(DEBUG_AUX, laserTargetZ)
         Aux.Str(DEBUG_AUX, string(11, 13, "calibrationZMin[")) 
-        AuxIo.Dec(DEBUG_AUX, tiltIndex)    
+        Aux.Dec(DEBUG_AUX, tiltIndex)    
         Aux.Str(DEBUG_AUX, string("] = ")) 
-        AuxIo.Dec(DEBUG_AUX, calibrationZMin[tiltIndex])
+        Aux.Dec(DEBUG_AUX, calibrationZMin[tiltIndex])
         Aux.Str(DEBUG_AUX, string(", calibrationZMax = ")) 
-        AuxIo.Dec(DEBUG_AUX, calibrationZMax[tiltIndex])
+        Aux.Dec(DEBUG_AUX, calibrationZMax[tiltIndex])
         Aux.Str(DEBUG_AUX, string(11, 13, "calibrationZRangeMin = ")) 
-        AuxIo.Dec(DEBUG_AUX, calibrationZRangeMin)
+        Aux.Dec(DEBUG_AUX, calibrationZRangeMin)
         Aux.Str(DEBUG_AUX, string(", calibrationZRangeMax = ")) 
-        AuxIo.Dec(DEBUG_AUX, calibrationZRangeMax)
+        Aux.Dec(DEBUG_AUX, calibrationZRangeMax)
       calibrationDBuffer[bufferIndex] := laserDistance
       calibrationZBuffer[bufferIndex] := laserTargetZ
       if debugFlag => SERVO_COG_MENU_DEBUG
@@ -1723,7 +1745,7 @@ PRI NewCalibration
 
   if debugFlag => SERVO_COG_DEBUG
     Aux.Str(DEBUG_AUX, string(11, 13, "NewCalibration ")) 
-  'AuxIo.Dec(DEBUG_AUX, bufferIndex)
+  'Aux.Dec(DEBUG_AUX, bufferIndex)
   longmove(@previousZRangeMin, @calibrationZRangeMin, PREVIOUS_CAL_LONGS)
   Calibration
   DisplayCalComparison
@@ -1761,13 +1783,14 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
   targetPosition[3] := calibrationTiltMax
   
   MoveServosQuietly(@targetPosition, 100)
-
+  scanZAveScan := 0
   repeat tiltIndex from 0 to TILT_CAL_GAPS
     targetPosition[3] := calibrationTiltMax - (tiltIndex * calibrationTiltSlope / {
     } SCALED_MULTIPLIER)
     MoveServosQuietly(@targetPosition, moveCycles[1])
     validReadingsThisTilt := 0
-    calibrationZAve[tiltIndex] := 0
+    'calibrationZAve[tiltIndex] := 0
+    scanZAve[tiltIndex] := 0
     if forwardPanFlag
       bufferIndex := (tiltIndex * PAN_CAL_POINTS) - 1
       if debugFlag => SERVO_COG_DEBUG
@@ -1778,39 +1801,41 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
     if debugFlag => SERVO_COG_DEBUG
-      AuxIo.Dec(DEBUG_AUX, bufferIndex)
+      Aux.Dec(DEBUG_AUX, bufferIndex)
       Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-      AuxIo.Dec(DEBUG_AUX, tiltIndex)    
+      Aux.Dec(DEBUG_AUX, tiltIndex)    
     repeat panIndex from 0 to PAN_CAL_GAPS
       if forwardPanFlag
         targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
         } SCALED_MULTIPLIER)
-        bufferIndex += 1
+        bufferIndex++
         
       else
         targetPosition[2] := calibrationPanMin + (panIndex * calibrationPanSlope / {
         } SCALED_MULTIPLIER)
-        bufferIndex -= 1
+        bufferIndex--
 
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
-        AuxIo.Dec(DEBUG_AUX, bufferIndex)
+        Aux.Dec(DEBUG_AUX, bufferIndex)
         Aux.Str(DEBUG_AUX, string(", panIndex = ")) 
-        AuxIo.Dec(DEBUG_AUX, panIndex)
+        Aux.Dec(DEBUG_AUX, panIndex)
         Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-        AuxIo.Dec(DEBUG_AUX, tiltIndex)
+        Aux.Dec(DEBUG_AUX, tiltIndex)
         Aux.Str(DEBUG_AUX, string(", forwardPanFlag = ")) 
-        AuxIo.Dec(DEBUG_AUX, forwardPanFlag)
+        Aux.Dec(DEBUG_AUX, forwardPanFlag)
       
       MoveServosQuietly(@targetPosition, moveCycles[0])
       QuietTiltServo
       laserDistance := GetLaserRange
+      'laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
         Aux.Str(DEBUG_AUX, @rawLaserInput) 
-      correctedZ := laserTargetZ - calibrationZBuffer[bufferIndex]
+      'correctedZ := laserTargetZ - calibrationZBuffer[bufferIndex]
       if laserDistance <> Header#INVALID_LASER_READING
         CalculateLaserPosition(laserDistance, @laserTargetX)
+        correctedZ := laserTargetZ - calibrationZBuffer[bufferIndex]
         validReadingsThisTilt++
         validReadingsThisScan++
         if validReadingsThisTilt == 1
@@ -1846,36 +1871,37 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
         correctedZ := Header#INVALID_LASER_READING
       if debugFlag => SERVO_COG_DEBUG
         Aux.Str(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
-        AuxIo.Dec(DEBUG_AUX, laserDistance)    
+        Aux.Dec(DEBUG_AUX, laserDistance)    
         Aux.Str(DEBUG_AUX, string(", laserTargetZ = ")) 
-        AuxIo.Dec(DEBUG_AUX, laserTargetZ)
+        Aux.Dec(DEBUG_AUX, laserTargetZ)
         Aux.Str(DEBUG_AUX, string(", correctedZ = ")) 
-        AuxIo.Dec(DEBUG_AUX, correctedZ)
+        Aux.Dec(DEBUG_AUX, correctedZ)
          
          
         Aux.Str(DEBUG_AUX, string(11, 13, "scanZMin[")) 
-        AuxIo.Dec(DEBUG_AUX, tiltIndex)    
+        Aux.Dec(DEBUG_AUX, tiltIndex)    
         Aux.Str(DEBUG_AUX, string("] = ")) 
-        AuxIo.Dec(DEBUG_AUX, scanZMin[tiltIndex])
+        Aux.Dec(DEBUG_AUX, scanZMin[tiltIndex])
         Aux.Str(DEBUG_AUX, string(", scanZMax = ")) 
-        AuxIo.Dec(DEBUG_AUX, scanZMax[tiltIndex])
+        Aux.Dec(DEBUG_AUX, scanZMax[tiltIndex])
         Aux.Str(DEBUG_AUX, string(11, 13, "scanZRangeMin = ")) 
-        AuxIo.Dec(DEBUG_AUX, scanZRangeMin)
+        Aux.Dec(DEBUG_AUX, scanZRangeMin)
         Aux.Str(DEBUG_AUX, string(", scanZRangeMax = ")) 
-        AuxIo.Dec(DEBUG_AUX, scanZRangeMax)  
+        Aux.Dec(DEBUG_AUX, scanZRangeMax)  
       scanDistanceBuffer[bufferIndex] := laserDistance
       scanXBuffer[bufferIndex] := laserTargetX
       scanYBuffer[bufferIndex] := laserTargetY
       scanZBuffer[bufferIndex] := laserTargetZ
-      correctedZBuffer[bufferIndex] := correctedZ
+      correctedZBuffer[bufferIndex] := correctedZ      
       if debugFlag => SERVO_COG_MENU_DEBUG
         LedDebugScan
       if debugFlag => SERVO_COG_DEBUG
         'SimpleDebug(@calibrationZBuffer, @scanZBuffer)
         SimpleDebug(@scanDistanceBuffer, @correctedZBuffer) 
     !forwardPanFlag
-    calibrationZRange[tiltIndex] := calibrationZMax[tiltIndex] - calibrationZMin[tiltIndex]
-    calibrationZAve[tiltIndex] /= validReadingsThisTilt
+    'calibrationZRange[tiltIndex] := calibrationZMax[tiltIndex] - calibrationZMin[tiltIndex]
+    'calibrationZAve[tiltIndex] /= validReadingsThisTilt
+ 
     if tiltIndex == 0
       calibrationZRangeMin := calibrationZRange[tiltIndex]
       calibrationZRangeMax := calibrationZRange[tiltIndex]
@@ -1883,7 +1909,8 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
       calibrationZRangeMin := calibrationZRange[tiltIndex]
     elseif calibrationZRange[tiltIndex] > calibrationZRangeMax
       calibrationZRangeMax := calibrationZRange[tiltIndex]
-  
+    scanZAve[tiltIndex] /= validReadingsThisTilt
+  scanZAveScan / = validReadingsThisScan
  { nextCnt := cnt
 
   repeat
@@ -2068,13 +2095,13 @@ PRI TargetExtreme(extremeType) | extremeIndex, extremePan, extremeTilt, extremeT
     Aux.Str(DEBUG_AUX, string(11, 13, "Extreme M"))
     Aux.Str(DEBUG_AUX, extremeTxt)
     Aux.Str(DEBUG_AUX, string("imum = "))
-    AuxIo.Dec(DEBUG_AUX, result)
+    Aux.Dec(DEBUG_AUX, result)
     Aux.Str(DEBUG_AUX, string(", # "))
-    AuxIo.Dec(DEBUG_AUX, extremeIndex)
+    Aux.Dec(DEBUG_AUX, extremeIndex)
     Aux.Str(DEBUG_AUX, string(", pan = "))
-    AuxIo.Dec(DEBUG_AUX, extremePan)
+    Aux.Dec(DEBUG_AUX, extremePan)
     Aux.Str(DEBUG_AUX, string(", tilt = "))
-    AuxIo.Dec(DEBUG_AUX, extremeTilt)
+    Aux.Dec(DEBUG_AUX, extremeTilt)
 
   longmove(@target, @servoPosition, 6)
   target[2] := extremePan
@@ -2133,7 +2160,7 @@ PUB SimpleDebug(buffer0, buffer1)
     Aux.Str(DEBUG_AUX, string(11, 13, "Laser Data Invalid"))
     return
   Aux.Str(DEBUG_AUX, string(11, 13, "laserDistance = "))
-  AuxIo.Dec(DEBUG_AUX, laserDistance) 
+  Aux.Dec(DEBUG_AUX, laserDistance) 
 
   Aux.Str(DEBUG_AUX, string(11, 13, "calibrationState = "))
   Aux.Str(DEBUG_AUX, FindString(@calibrationStateAsText, calibrationState))
@@ -2143,32 +2170,32 @@ PUB SimpleDebug(buffer0, buffer1)
   
   
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Target (XYZ) = "))
-  AuxIo.Dec(DEBUG_AUX, laserTargetX)
+  Aux.Dec(DEBUG_AUX, laserTargetX)
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, laserTargetY)
+  Aux.Dec(DEBUG_AUX, laserTargetY)
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, laserTargetZ)
+  Aux.Dec(DEBUG_AUX, laserTargetZ)
 
       
   Aux.Str(DEBUG_AUX, string(11, 13, "Pan  = "))
-  AuxIo.DecDp(DEBUG_AUX, panDegrees10, 1)
+  Aux.DecDp(DEBUG_AUX, panDegrees10, 1)
   Aux.Str(DEBUG_AUX, string(" degrees from forward, "))
   Aux.Str(DEBUG_AUX, string(11, 13, "Tilt = "))
-  AuxIo.DecDp(DEBUG_AUX, tiltDegrees10, 1)
+  Aux.DecDp(DEBUG_AUX, tiltDegrees10, 1)
   Aux.Str(DEBUG_AUX, string(" degrees down from level"))  
 
 
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
-  AuxIo.Dec(DEBUG_AUX, servoPosition[2])
+  Aux.Dec(DEBUG_AUX, servoPosition[2])
   Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
-  AuxIo.Dec(DEBUG_AUX, servoPosition[3])
+  Aux.Dec(DEBUG_AUX, servoPosition[3])
   Aux.Str(DEBUG_AUX, string(11, 13, "Buffer Index = "))
-  AuxIo.Dec(DEBUG_AUX, bufferIndex)
+  Aux.Dec(DEBUG_AUX, bufferIndex)
 
   Aux.Str(DEBUG_AUX, string(", PAN_CAL_GAPS = "))
-  AuxIo.Dec(DEBUG_AUX, PAN_CAL_GAPS)
+  Aux.Dec(DEBUG_AUX, PAN_CAL_GAPS)
   Aux.Str(DEBUG_AUX, string(", TILT_CAL_GAPS = "))
-  AuxIo.Dec(DEBUG_AUX, TILT_CAL_GAPS)
+  Aux.Dec(DEBUG_AUX, TILT_CAL_GAPS)
 
   Aux.Str(DEBUG_AUX, string(11, 13, "calibrationBuffer = "))
 
@@ -2413,62 +2440,74 @@ PUB AngleToPulse(fAngle)
 '' Return integer pulse length based on floating point angle (in radians).
 
   result := F32.FRound(F32.FMul(fAngle, Header#F_US_PER_RADIAN)) 
-   
-PUB GetLaserRange | inputcharacter, rawInputIndex', newData
 
-  'Aux.Str(DEBUG_AUX, string(11, 13, "Start of GetLaserRange method."))
-  'dira[SR02_TRIGGER_PIN] := 1
-  'Aux.E
-  'repeat until not lockset(laserLock)
-  'repeat while lockset(laserLock)
+PUB GetLaserRangeMedian(bufferPtr, readings) | maxIndex
+
+  Aux.Str(DEBUG_AUX, string(11, 13, "GetLaserRangeMedian, readings = "))
+  Aux.Dec(DEBUG_AUX, readings)
+  Aux.Str(DEBUG_AUX, string(", data = "))
+  maxIndex := readings - 1
+  repeat result from 0 to maxIndex
+    long[bufferPtr][result] := GetLaserRange   
+    Aux.Dec(DEBUG_AUX, long[bufferPtr][result])
+    Aux.Str(DEBUG_AUX, string(", "))
+  result := LongMedian(bufferPtr, readings)
+  Aux.Str(DEBUG_AUX, string(11, 13, "median distance := "))
+  Aux.Dec(DEBUG_AUX, result)
+    
+PUB GetLaserRange | inputcharacter, rawInputIndex, validFlag
+
+  result := Aux.rxHowFull(SR02_AUX)
+  if result > 1
+    Aux.Str(DEBUG_AUX, string(11, 13, "****** Flushing at least "))
+    Aux.Dec(DEBUG_AUX, result)
+    Aux.Str(DEBUG_AUX, string(" bytes from rx buffer. ******")) 
+    Aux.rxflush(SR02_AUX)
+ 
   rawInputIndex := 0
   Aux.Tx(SR02_AUX, "D")
-  longmove(@laserServos, @servoPosition[2], 2)
+  validFlag := 0
+  result := 0
   
-  'Com.Tx(0, "D")
-  'Aux.Str(DEBUG_AUX, string(11, 13, "After Tx call."))
-  'if debugFlag
-  '  Aux.Str(DEBUG_AUX, string(11, 13, "GetLaserRange"))
-  'dira[SR02_TRIGGER_PIN] := 0
-  'newData := 0
   repeat
-    'if debugFlag
-      'Aux.Str(DEBUG_AUX, string(11, 13, "Before RxTime Call.")) 
-    'ifnot newData
-      'lockclr(laserLock)
-      'longmove(@laserServos[2], @servoPosition[2], 2)
-  
-      'newData := 1
-    'inputcharacter := Com.RxTime(0, 100)
     inputcharacter := Aux.RxTime(SR02_AUX, 100)
     if inputcharacter <> -1
       rawLaserInput[rawInputIndex++] := inputcharacter
 
     if rawInputIndex > MAX_LASER_BUFFER_INDEX
       error := string("buffer overflow")
+      validFlag := 0
       quit
-    'Aux.Str(DEBUG_AUX, string(11, 13, "After RxTime Call.")) 
-    'if debugFlag
-      'SafeTx(inputcharacter)
-    'Aux.Str(DEBUG_AUX, string(11, 13, "After SafeTx Call.")) 
     case inputcharacter
       "0".."9":       
-        result := (result * 10) + (inputcharacter - "0") 
+        result := (result * 10) + (inputcharacter - "0")
+        validFlag := 1
   until inputcharacter == 13 or inputcharacter == -1
   rawLaserInput[rawInputIndex] := 0
-  Aux.Str(DEBUG_AUX, string(11, 13, "rawLaserInput = "))
-  Aux.Str(DEBUG_AUX, @rawLaserInput)
-  Aux.Str(DEBUG_AUX, string(11, 13, "rawInputIndex = "))
-  AuxIo.Dec(DEBUG_AUX, rawInputIndex)
-    
-  {if debugFlag
-    Aux.Str(DEBUG_AUX, string(11, 13, "laserRange = "))
-    AuxIo.Dec(DEBUG_AUX, result)  }
+
+  if validFlag == 0
+    result := Header#INVALID_LASER_READING
+
+PUB LongMedian(arrayAddress, elements) | halfTheElements, toCompareIndex, {
+} compareAgainstIndex, elementsLarger, elementsSmaller, maxIndex 
+
+  maxIndex := elements - 1
+  halfTheElements := elements / 2
+  repeat toCompareIndex from 0 to maxIndex
+    elementsLarger := 0
+    elementsSmaller := 0   
+    repeat compareAgainstIndex from 0 to maxIndex
+      if long[arrayAddress][toCompareIndex] > long[arrayAddress][compareAgainstIndex]
+        elementsSmaller++   
+      elseif long[arrayAddress][toCompareIndex] < long[arrayAddress][compareAgainstIndex]
+        elementsLarger++
+    if elementsSmaller =< halfTheElements and elementsLarger =< halfTheElements
+      return long[arrayAddress][toCompareIndex]
 
 PUB CalculateLaserPosition(distance, resultPointer) | servoAverages[2], gndD
 
   'Aux.Str(DEBUG_AUX, string(11, 13, "CalculateLaserPosition, distance  = "))
-  'AuxIo.Dec(DEBUG_AUX, distance)
+  'Aux.Dec(DEBUG_AUX, distance)
   'Aux.Str(DEBUG_AUX, string(" cm"))   
   repeat result from 0 to 1
     servoAverages[result] := (laserServos[result] + laserServos[result + 2]) / 2
@@ -2496,31 +2535,31 @@ PUB CalculateLaserPosition(distance, resultPointer) | servoAverages[2], gndD
   tiltDegrees10 := F32.FRound(F32.FMul(F32.Degrees(servoAverages[1]), 10.0))
   {if debugFlag 
     Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
-    AuxIo.Dec(DEBUG_AUX, laserServos[0])
+    Aux.Dec(DEBUG_AUX, laserServos[0])
     Aux.Str(DEBUG_AUX, string(" & "))
-    AuxIo.Dec(DEBUG_AUX, laserServos[2])
+    Aux.Dec(DEBUG_AUX, laserServos[2])
     Aux.Str(DEBUG_AUX, string(", ave = "))
-    AuxIo.Dec(DEBUG_AUX, (laserServos[0] + laserServos[2]) / 2)
+    Aux.Dec(DEBUG_AUX, (laserServos[0] + laserServos[2]) / 2)
     Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
-    AuxIo.Dec(DEBUG_AUX, laserServos[1])
+    Aux.Dec(DEBUG_AUX, laserServos[1])
     Aux.Str(DEBUG_AUX, string(" & "))
-    AuxIo.Dec(DEBUG_AUX, laserServos[3])
+    Aux.Dec(DEBUG_AUX, laserServos[3])
     Aux.Str(DEBUG_AUX, string(", ave = "))
-    AuxIo.Dec(DEBUG_AUX, (laserServos[1] + laserServos[3]) / 2)  }
+    Aux.Dec(DEBUG_AUX, (laserServos[1] + laserServos[3]) / 2)  }
   
 PUB GetPing(numberOfSensors, pointer)
 '' Is this method really needed?
 '' Yes, it will eventually do more.
   Aux.Str(DEBUG_AUX, string(11, 13, "GetPing("))
-  AuxIo.Dec(DEBUG_AUX, numberOfSensors)
+  Aux.Dec(DEBUG_AUX, numberOfSensors)
   Aux.Str(DEBUG_AUX, string(", $"))
-  AuxIo.Hex(DEBUG_AUX, pointer, 4)
+  Aux.Hex(DEBUG_AUX, pointer, 4)
   Aux.Tx(DEBUG_AUX, ")")
   ' ** currently this code is useless
   'Aux.Str(DEBUG_AUX, string(11, 13, "pingNew = "))
-  'AuxIo.Dec(DEBUG_AUX, pingNew[0])
+  'Aux.Dec(DEBUG_AUX, pingNew[0])
   'Aux.Str(DEBUG_AUX, string(", "))
-  'AuxIo.Dec(DEBUG_AUX, pingNew[1])
+  'Aux.Dec(DEBUG_AUX, pingNew[1])
    
 
 PUB DivideWithRound(numerator, denominator)
@@ -2563,17 +2602,17 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
   'DisplayTwoDataPoints(rightX * MAX_LED_INDEX / 255, GREEN, rightY * MAX_LED_INDEX / 255, RED, OFF)
   
   Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck = "))
-  AuxIo.Dec(DEBUG_AUX, rightX)
+  Aux.Dec(DEBUG_AUX, rightX)
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, rightY)
+  Aux.Dec(DEBUG_AUX, rightY)
   Aux.Str(DEBUG_AUX, string(" & "))
-  AuxIo.Dec(DEBUG_AUX, nunchuckAcceleration[0])
+  Aux.Dec(DEBUG_AUX, nunchuckAcceleration[0])
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, nunchuckAcceleration[1])
+  Aux.Dec(DEBUG_AUX, nunchuckAcceleration[1])
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, nunchuckAcceleration[2])
+  Aux.Dec(DEBUG_AUX, nunchuckAcceleration[2])
   Aux.Str(DEBUG_AUX, string(" : ButtonsZC = "))
-  AuxIo.Dec(DEBUG_AUX, nunchuckButton)
+  Aux.Dec(DEBUG_AUX, nunchuckButton)
  
   if nunchuckButton <> previousButton and previousButton == Header#NUNCHUCK_BUTTON_NONE
     case nunchuckButton
@@ -2620,21 +2659,21 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
     
  
   Aux.Str(DEBUG_AUX, string(11, 13, "joy = "))
-  AuxIo.Dec(DEBUG_AUX, joyX)
+  Aux.Dec(DEBUG_AUX, joyX)
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, joyY)
+  Aux.Dec(DEBUG_AUX, joyY)
 
   {Aux.Str(DEBUG_AUX, string(", localParameter = "))
-  AuxIo.Dec(DEBUG_AUX, localParameter[LEFT_MOTOR])
+  Aux.Dec(DEBUG_AUX, localParameter[LEFT_MOTOR])
   Aux.Str(DEBUG_AUX, string(", "))
-  AuxIo.Dec(DEBUG_AUX, localParameter[RIGHT_MOTOR])
+  Aux.Dec(DEBUG_AUX, localParameter[RIGHT_MOTOR])
   if ||localParameter[LEFT_MOTOR] > localMax or ||localParameter[RIGHT_MOTOR] > localMax
     localParameter[LEFT_MOTOR] := -localMax #> localParameter[LEFT_MOTOR] <# localMax
     localParameter[RIGHT_MOTOR] := -localMax #> localParameter[RIGHT_MOTOR] <# localMax
     Aux.Str(DEBUG_AUX, string(", limited = "))
-    AuxIo.Dec(DEBUG_AUX, localParameter[LEFT_MOTOR])
+    Aux.Dec(DEBUG_AUX, localParameter[LEFT_MOTOR])
     Aux.Str(DEBUG_AUX, string(", "))
-    AuxIo.Dec(DEBUG_AUX, localParameter[RIGHT_MOTOR])
+    Aux.Dec(DEBUG_AUX, localParameter[RIGHT_MOTOR])
     
     'result := pauseForRxFlag
     'pauseForRxFlag := 1
@@ -2661,7 +2700,7 @@ PUB CheckPointedDown
 
   if nunchuckAcceleration[Header#Y_ACCEL] > Header#NUNCHUCK_DOWN_THRESHOLD
     result := true
-  
+
 DAT
   'full displays
   '$02
