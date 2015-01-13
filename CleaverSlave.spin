@@ -1495,12 +1495,12 @@ PRI ServoControl | nextCnt
   
   nextCnt := cnt + controlInterval
   if debugFlag => SERVO_COG_DEBUG
-    Aux.Str(DEBUG_AUX, string(11, 13, "ServoControl")) 
+    Aux.Strse(DEBUG_AUX, string(11, 13, "ServoControl")) 
      
   repeat 'while calibrationState < USE_CAL
     if debugFlag => SERVO_COG_DEBUG
-      Aux.Str(DEBUG_AUX, string(11, 13, "calibrationState = ")) 
-      Aux.Str(DEBUG_AUX, FindString(@calibrationStateAsText, calibrationState))
+      Aux.Strs(DEBUG_AUX, string(11, 13, "calibrationState = ")) 
+      Aux.Stre(DEBUG_AUX, FindString(@calibrationStateAsText, calibrationState))
     case calibrationState
       CHECK_FOR_CAL:
         CheckCalibration
@@ -1522,7 +1522,7 @@ PRI ServoControl | nextCnt
         NewCalibration
         
   if debugFlag => SERVO_COG_DEBUG
-    Aux.Str(DEBUG_AUX, string(7, 11, 13, "****** Calibration Done ******", 7)) 
+    Aux.Strse(DEBUG_AUX, string(7, 11, 13, "****** Calibration Done ******", 7)) 
   waitcnt(clkfreq * 2 + cnt)
     
   repeat   '*** use and new go here
@@ -1535,7 +1535,7 @@ PRI ServoControl | nextCnt
       
 PRI CheckCalibration | status
 
-  if calibrationVersion == CALIBRATION_VERSION
+  if calibrationVersion == CALIBRATION_VERSION   
     case calibrationStatus
       NO_LOWER_DATA: ' this shouldn't happen
         calibrationState := INITILIZE_CAL 
@@ -1546,7 +1546,7 @@ PRI CheckCalibration | status
           calibrationState := USE_CAL
         else
           ClearLowCal
-          calibrationState := INITILIZE_CAL
+          calibrationState := INITILIZE_CAL  
       NEW_LOW_OLD_HIGH_CAL_DATA: ' new data was lost
         result := ChooseWhichCal
         if result
@@ -1636,16 +1636,16 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
     if forwardPanFlag
       bufferIndex := (tiltIndex * PAN_CAL_POINTS) - 1
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "forwardPanFlag true , bufferIndex = "))
+        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag true , bufferIndex = "))
       
     else
       bufferIndex := (tiltIndex + 1) * PAN_CAL_POINTS
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
     if debugFlag => SERVO_COG_DEBUG
       Aux.Dec(DEBUG_AUX, bufferIndex)
       Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-      Aux.Dec(DEBUG_AUX, tiltIndex)    
+      Aux.Dece(DEBUG_AUX, tiltIndex)    
     repeat panIndex from 0 to PAN_CAL_GAPS
       if forwardPanFlag
         targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
@@ -1657,23 +1657,23 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
         } SCALED_MULTIPLIER)
         bufferIndex--
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
         Aux.Dec(DEBUG_AUX, bufferIndex)
         Aux.Str(DEBUG_AUX, string(", panIndex = ")) 
         Aux.Dec(DEBUG_AUX, panIndex)
         Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
         Aux.Dec(DEBUG_AUX, tiltIndex)
         Aux.Str(DEBUG_AUX, string(", forwardPanFlag = ")) 
-        Aux.Dec(DEBUG_AUX, forwardPanFlag)
+        Aux.Dece(DEBUG_AUX, forwardPanFlag)
       
       MoveServosQuietly(@targetPosition, moveCycles[0])
       QuietTiltServo
-      laserDistance := GetLaserRange
-      'laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
+      'laserDistance := GetLaserRange
+      laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
       
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
-        Aux.Str(DEBUG_AUX, @rawLaserInput) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
+        Aux.Stre(DEBUG_AUX, @rawLaserInput) 
       
       if laserDistance <> Header#INVALID_LASER_READING
         CalculateLaserPosition(laserDistance, @laserTargetX)
@@ -1689,11 +1689,11 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
       else
         laserTargetZ := Header#INVALID_LASER_READING
         if debugFlag => SERVO_COG_DEBUG
-          Aux.Str(DEBUG_AUX, string(7, 11, 13, 7, "********* Invalid rawLaserInput = ")) 
+          Aux.Strs(DEBUG_AUX, string(7, 11, 13, 7, "********* Invalid rawLaserInput = ")) 
           Aux.Str(DEBUG_AUX, @rawLaserInput)
-          Aux.Str(DEBUG_AUX, string(7, 7, " **********", 7, 7))
+          Aux.Stre(DEBUG_AUX, string(7, 7, " **********", 7, 7))
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
         Aux.Dec(DEBUG_AUX, laserDistance)    
         Aux.Str(DEBUG_AUX, string(", laserTargetZ = ")) 
         Aux.Dec(DEBUG_AUX, laserTargetZ)
@@ -1706,13 +1706,15 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
         Aux.Str(DEBUG_AUX, string(11, 13, "calibrationZRangeMin = ")) 
         Aux.Dec(DEBUG_AUX, calibrationZRangeMin)
         Aux.Str(DEBUG_AUX, string(", calibrationZRangeMax = ")) 
-        Aux.Dec(DEBUG_AUX, calibrationZRangeMax)
+        Aux.Dece(DEBUG_AUX, calibrationZRangeMax)
       calibrationDBuffer[bufferIndex] := laserDistance
       calibrationZBuffer[bufferIndex] := laserTargetZ
       if debugFlag => SERVO_COG_MENU_DEBUG
         LedDebugCal
       if debugFlag => SERVO_COG_DEBUG
+        Aux.Lock
         SimpleDebug(@calibrationDBuffer, @calibrationZBuffer)
+        Aux.E
     !forwardPanFlag
     calibrationZRange[tiltIndex] := calibrationZMax[tiltIndex] - calibrationZMin[tiltIndex]
     calibrationZAve[tiltIndex] /= validReadingsThisTilt
@@ -1744,7 +1746,7 @@ previousZAve                    long 0-0[TILT_CAL_POINTS] }
 PRI NewCalibration
 
   if debugFlag => SERVO_COG_DEBUG
-    Aux.Str(DEBUG_AUX, string(11, 13, "NewCalibration ")) 
+    Aux.Strse(DEBUG_AUX, string(11, 13, "NewCalibration ")) 
   'Aux.Dec(DEBUG_AUX, bufferIndex)
   longmove(@previousZRangeMin, @calibrationZRangeMin, PREVIOUS_CAL_LONGS)
   Calibration
@@ -1794,16 +1796,16 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
     if forwardPanFlag
       bufferIndex := (tiltIndex * PAN_CAL_POINTS) - 1
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "forwardPanFlag true , bufferIndex = "))
+        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag true , bufferIndex = "))
       
     else
       bufferIndex := (tiltIndex + 1) * PAN_CAL_POINTS
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
     if debugFlag => SERVO_COG_DEBUG
       Aux.Dec(DEBUG_AUX, bufferIndex)
       Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-      Aux.Dec(DEBUG_AUX, tiltIndex)    
+      Aux.Dece(DEBUG_AUX, tiltIndex)    
     repeat panIndex from 0 to PAN_CAL_GAPS
       if forwardPanFlag
         targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
@@ -1816,22 +1818,22 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
         bufferIndex--
 
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
         Aux.Dec(DEBUG_AUX, bufferIndex)
         Aux.Str(DEBUG_AUX, string(", panIndex = ")) 
         Aux.Dec(DEBUG_AUX, panIndex)
         Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
         Aux.Dec(DEBUG_AUX, tiltIndex)
         Aux.Str(DEBUG_AUX, string(", forwardPanFlag = ")) 
-        Aux.Dec(DEBUG_AUX, forwardPanFlag)
+        Aux.Dece(DEBUG_AUX, forwardPanFlag)
       
       MoveServosQuietly(@targetPosition, moveCycles[0])
       QuietTiltServo
-      laserDistance := GetLaserRange
-      'laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
+      'laserDistance := GetLaserRange
+      laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
-        Aux.Str(DEBUG_AUX, @rawLaserInput) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
+        Aux.Stre(DEBUG_AUX, @rawLaserInput) 
       'correctedZ := laserTargetZ - calibrationZBuffer[bufferIndex]
       if laserDistance <> Header#INVALID_LASER_READING
         CalculateLaserPosition(laserDistance, @laserTargetX)
@@ -1870,7 +1872,7 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
         laserTargetZ := Header#INVALID_LASER_READING
         correctedZ := Header#INVALID_LASER_READING
       if debugFlag => SERVO_COG_DEBUG
-        Aux.Str(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
+        Aux.Strs(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
         Aux.Dec(DEBUG_AUX, laserDistance)    
         Aux.Str(DEBUG_AUX, string(", laserTargetZ = ")) 
         Aux.Dec(DEBUG_AUX, laserTargetZ)
@@ -1887,7 +1889,7 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
         Aux.Str(DEBUG_AUX, string(11, 13, "scanZRangeMin = ")) 
         Aux.Dec(DEBUG_AUX, scanZRangeMin)
         Aux.Str(DEBUG_AUX, string(", scanZRangeMax = ")) 
-        Aux.Dec(DEBUG_AUX, scanZRangeMax)  
+        Aux.Dece(DEBUG_AUX, scanZRangeMax)  
       scanDistanceBuffer[bufferIndex] := laserDistance
       scanXBuffer[bufferIndex] := laserTargetX
       scanYBuffer[bufferIndex] := laserTargetY
@@ -1897,7 +1899,9 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
         LedDebugScan
       if debugFlag => SERVO_COG_DEBUG
         'SimpleDebug(@calibrationZBuffer, @scanZBuffer)
-        SimpleDebug(@scanDistanceBuffer, @correctedZBuffer) 
+        Aux.Lock
+        SimpleDebug(@scanDistanceBuffer, @correctedZBuffer)
+        Aux.E
     !forwardPanFlag
     'calibrationZRange[tiltIndex] := calibrationZMax[tiltIndex] - calibrationZMin[tiltIndex]
     'calibrationZAve[tiltIndex] /= validReadingsThisTilt
@@ -1956,14 +1960,14 @@ PRI ChooseToSaveLow
   LedStr(ledMessage[2]) '*
   
   if debugFlag => SERVO_COG_MENU_DEBUG
-    Aux.Str(DEBUG_AUX, string(11, 13, "Press C button to save this calibration."))
+    Aux.Strse(DEBUG_AUX, string(11, 13, "Press C button to save this calibration."))
    
   repeat while ledMessage[0]
     if debugFlag => SERVO_COG_MENU_DEBUG
-      Aux.Tx(DEBUG_AUX, 2)
+      Aux.Txs(DEBUG_AUX, 2)
       Aux.Tx(DEBUG_AUX, 0)
       Aux.Tx(DEBUG_AUX, 20 + TILT_CAL_POINTS)
-      Aux.Str(DEBUG_AUX, string(11, 13, "Press C button to save this calibration."))
+      Aux.Stre(DEBUG_AUX, string(11, 13, "Press C button to save this calibration."))
       GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
@@ -1990,13 +1994,13 @@ PRI ChooseToBackupLow
   LedStr(ledMessage[2]) '*
   
   if debugFlag => SERVO_COG_MENU_DEBUG
-    Aux.Str(DEBUG_AUX, string(11, 13, "Press C button to backup this calibration."))
-    Aux.Str(DEBUG_AUX, string(11, 13, "Press Z button to not backup this calibration."))
+    Aux.Strs(DEBUG_AUX, string(11, 13, "Press C button to backup this calibration."))
+    Aux.Stre(DEBUG_AUX, string(11, 13, "Press Z button to not backup this calibration."))
     
   repeat while ledMessage[0]
     if debugFlag => SERVO_COG_MENU_DEBUG
-      Aux.Str(DEBUG_AUX, string(11, 13, "Press C button to backup this calibration."))
-      Aux.Str(DEBUG_AUX, string(11, 13, "Press Z button to not backup this calibration."))
+      Aux.Strs(DEBUG_AUX, string(11, 13, "Press C button to backup this calibration."))
+      Aux.Stre(DEBUG_AUX, string(11, 13, "Press Z button to not backup this calibration."))
       GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
@@ -2014,10 +2018,10 @@ PUB WaitForC(row)
 
   repeat 
     if debugFlag => SERVO_COG_MENU_DEBUG
-      Aux.Tx(DEBUG_AUX, 2)
+      Aux.Txs(DEBUG_AUX, 2)
       Aux.Tx(DEBUG_AUX, 0)
       Aux.Tx(DEBUG_AUX, row)
-      Aux.Str(DEBUG_AUX, string(11, 13, "Press button to continue."))
+      Aux.Stre(DEBUG_AUX, string(11, 13, "Press button to continue."))
       GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
@@ -2044,13 +2048,13 @@ PRI ChooseWhichCal
   LedStr(ledMessage[2]) '*
   
   if debugFlag => SERVO_COG_MENU_DEBUG
-    Aux.Str(DEBUG_AUX, string(11, 13, "Press C button to keep new calibration."))
-    Aux.Str(DEBUG_AUX, string(11, 13, "Press Z button to keep old calibration."))
+    Aux.Strs(DEBUG_AUX, string(11, 13, "Press C button to keep new calibration."))
+    Aux.Stre(DEBUG_AUX, string(11, 13, "Press Z button to keep old calibration."))
     
   repeat while ledMessage[0]
     if debugFlag => SERVO_COG_MENU_DEBUG
-      Aux.Str(DEBUG_AUX, string(11, 13, "Press C button to keep new calibration."))
-      Aux.Str(DEBUG_AUX, string(11, 13, "Press Z button to keep old calibration."))
+      Aux.Strs(DEBUG_AUX, string(11, 13, "Press C button to keep new calibration."))
+      Aux.Stre(DEBUG_AUX, string(11, 13, "Press Z button to keep old calibration."))
       GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
@@ -2092,7 +2096,7 @@ PRI TargetExtreme(extremeType) | extremeIndex, extremePan, extremeTilt, extremeT
       extremeTxt := string("ax")
       result := scanZAbsMax  
   if debugFlag => SERVO_COG_MENU_DEBUG
-    Aux.Str(DEBUG_AUX, string(11, 13, "Extreme M"))
+    Aux.Strs(DEBUG_AUX, string(11, 13, "Extreme M"))
     Aux.Str(DEBUG_AUX, extremeTxt)
     Aux.Str(DEBUG_AUX, string("imum = "))
     Aux.Dec(DEBUG_AUX, result)
@@ -2101,7 +2105,7 @@ PRI TargetExtreme(extremeType) | extremeIndex, extremePan, extremeTilt, extremeT
     Aux.Str(DEBUG_AUX, string(", pan = "))
     Aux.Dec(DEBUG_AUX, extremePan)
     Aux.Str(DEBUG_AUX, string(", tilt = "))
-    Aux.Dec(DEBUG_AUX, extremeTilt)
+    Aux.Dece(DEBUG_AUX, extremeTilt)
 
   longmove(@target, @servoPosition, 6)
   target[2] := extremePan
@@ -2443,25 +2447,26 @@ PUB AngleToPulse(fAngle)
 
 PUB GetLaserRangeMedian(bufferPtr, readings) | maxIndex
 
-  Aux.Str(DEBUG_AUX, string(11, 13, "GetLaserRangeMedian, readings = "))
+  Aux.Strs(DEBUG_AUX, string(11, 13, "GetLaserRangeMedian, readings = "))
   Aux.Dec(DEBUG_AUX, readings)
-  Aux.Str(DEBUG_AUX, string(", data = "))
+  Aux.Stre(DEBUG_AUX, string(", data = "))
   maxIndex := readings - 1
   repeat result from 0 to maxIndex
-    long[bufferPtr][result] := GetLaserRange   
+    long[bufferPtr][result] := GetLaserRange
+    Aux.Lock  
     Aux.Dec(DEBUG_AUX, long[bufferPtr][result])
-    Aux.Str(DEBUG_AUX, string(", "))
+    Aux.Stre(DEBUG_AUX, string(", "))
   result := LongMedian(bufferPtr, readings)
-  Aux.Str(DEBUG_AUX, string(11, 13, "median distance := "))
-  Aux.Dec(DEBUG_AUX, result)
+  Aux.Strs(DEBUG_AUX, string(11, 13, "median distance := "))
+  Aux.Dece(DEBUG_AUX, result)
     
 PUB GetLaserRange | inputcharacter, rawInputIndex, validFlag
 
   result := Aux.rxHowFull(SR02_AUX)
   if result > 1
-    Aux.Str(DEBUG_AUX, string(11, 13, "****** Flushing at least "))
+    Aux.Strs(DEBUG_AUX, string(11, 13, "****** Flushing at least "))
     Aux.Dec(DEBUG_AUX, result)
-    Aux.Str(DEBUG_AUX, string(" bytes from rx buffer. ******")) 
+    Aux.Stre(DEBUG_AUX, string(" bytes from rx buffer. ******")) 
     Aux.rxflush(SR02_AUX)
  
   rawInputIndex := 0
@@ -2775,7 +2780,7 @@ modeAsText                      byte "POWER", 0
                                 byte "POSITION", 0
                                 byte "ARC_POSITION", 0
 
-calibrationStateAsText          byte "CHECK_FOR_CAL", 0
+calibrationStateAsText          byte "CHECK_FOR_CAL", 0 
                                 byte "INITILIZE_CAL", 0
                                 byte "CHOOSE_CAL", 0
                                 byte "USE_CAL", 0
