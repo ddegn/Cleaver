@@ -18,9 +18,11 @@ CON
   MILLISECOND = _clkfreq / 1000
   ' Settings
   BUFFER_LENGTH = 255           ' Input Buffer Length must fit within input/output 'Index' ranges (currently a byte)
-  LASER_BUFFER = 16
-  MEDIAN_BUFFER = 8
-  MAX_LASER_BUFFER_INDEX = LASER_BUFFER - 1
+  DEFAULT_LASER_SAMPLES = 8
+  MAX_LASER_SAMPLES = 32
+  RAW_LASER_BUFFER_SIZE = 12
+  'MEDIAN_BUFFER = 8
+  'MAX_LASER_SAMPLE_INDEX = LASER_SAMPLES - 1
   SCALED_MULTIPLIER = 1000
   SCALED_TAU = 6_283            ' circumfrence / radius
   SCALED_CIRCLE = 360 * SCALED_MULTIPLIER
@@ -133,7 +135,8 @@ CON '' Debug Levels
   PID_D_DEBUG = PID_DEBUG
   PID_POSITION_DEBUG = PID_DEBUG
   PID_SPEED_DEBUG = PID_DEBUG
-
+  LASER_CALC_DEBUG = SERVO_COG_DEBUG
+  
 CON 
 
   
@@ -141,7 +144,7 @@ CON
  
   PING_STACK_SIZE = 24 ' It appears the cog monitoring the Pings use 23 longs
   'of the stack.
-  SERVO_STACK_SIZE = 256
+  SERVO_STACK_SIZE = 356
   
   ACTIVE_SERVO_POS_IN_SERVOTXT = 8
   DEC_IN_RESTORE_POS = 6
@@ -446,7 +449,7 @@ VAR
   long scanZMinIndex, scanZMaxIndex, scanZAbsMin, scanZAbsMax
   long scanZMinPan, scanZMaxPan
   long scanZMinTilt, scanZMaxTilt, scanZAveScan
-  long comparisons, swaps, medianBuffer[MEDIAN_BUFFER]
+  long comparisons, swaps, medianBuffer[MAX_LASER_SAMPLES]
   
   byte pingsInUse, maxPingIndex
   byte inputBuffer[BUFFER_LENGTH], outputBuffer[BUFFER_LENGTH] 
@@ -455,8 +458,8 @@ VAR
   byte previouslrfServoMode, lrfServoMode, sensorMode
   byte rightX, rightY, nunchuckButton, previousButton
   byte badDataFlag, nunchuckReadyFlag, nunchuckReceiverConnectedFlag
-  byte rawLaserInput[LASER_BUFFER]
-  byte menuSelect, medianBufferByte[MEDIAN_BUFFER]
+  byte rawLaserInput[RAW_LASER_BUFFER_SIZE]
+  byte menuSelect
        
 DAT '' variables which my have non-zero initial values
 
@@ -538,6 +541,8 @@ previousZMin                    long 0-0[TILT_CAL_POINTS]
 previousZMax                    long 0-0[TILT_CAL_POINTS]
 previousZRange                  long 0-0[TILT_CAL_POINTS]
 previousZAve                    long 0-0[TILT_CAL_POINTS]
+rangesToSample                  long DEFAULT_LASER_SAMPLES
+'maxLaserSampleIndex             long DEFAULT_LASER_SAMPLES - 1
  
 debugFlag                       byte SERVO_COG_DEBUG 'FULL_DEBUG
                       
@@ -555,7 +560,7 @@ sensorServoMode                 byte AUTO_SERVO_MODE
 calibrationState                byte DEFAULT_CAL_STATE
 
 sevenSegmentBrightness          byte Header#DEFAULT_7_SEGMENT_BRIGHTNESS
-                                
+                         
 OBJ                             
                                 
   Header : "HeaderCleaver"         
@@ -608,10 +613,10 @@ PUB Main
    
   repeat }
 
-  
+  {
   Leds.init(Header#SEVEN_SEGMENT_LATCH, Header#SEVEN_SEGMENT_DATA, {
   } Header#SEVEN_SEGMENT_CLOCK, Header#SEVEN_SEGMENTS_IN_USE, sevenSegmentBrightness)
-  
+  }
   longfill(@pingStack, FILL_LONG, PING_STACK_SIZE)
   Ping.Start(pingMask, pingInterval, @pingResults)
   ' Continuously trigger and read pulse widths on PING))) pins
@@ -632,18 +637,18 @@ PUB Main
   servoDataPtr := InitializeServos(DEFAULT_SERVO_INIT_DELAY)
 
   F32.Start
-  'Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
-  'I2c.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE) ' use same I2C driver with EEPROM
-  ServoControl
-  'cognew(ServoControl, @servoControlStack)   
-  'activeParameter := @targetPower[RIGHT_MOTOR]
-  'activeParTxtPtr := @targetPowerRTxt
+  Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
+  I2c.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE) ' use same I2C driver with EEPROM
+  'ServoControl
+  cognew(ServoControl, @servoControlStack)   
+  activeParameter := @rangesToSample
+  activeParTxtPtr := @rangesToSampleTxt
 
-  'MainLoop
+  MainLoop
 
 PUB MainLoop | rxcheck, lastDebugTime
 
-  Aux.Str(DEBUG_AUX, string(11, 13, "Starting MainLoop"))  
+  Aux.Strse(DEBUG_AUX, string(11, 13, "Starting MainLoop"))  
   lastComTime := cnt
   repeat
     mainLoopCount++
@@ -656,16 +661,18 @@ PUB MainLoop | rxcheck, lastDebugTime
     
     'laserDistance := GetLaserRange
     'Aux.Str(DEBUG_AUX, string(11, 13, "After GetLaserRange call."))
-
-    'GetNunchuckData
-    
+    Aux.Lock
+    GetNunchuckData
+    Aux.E
     'if laserDistance <> Header#INVALID_LASER_READING
     '  CalculateLaserPosition(laserDistance, @laserTargetX)
       'Com.Str(string("LSR "))
     'menuSelect := nunchuckButton
       
-    if debugFlag => MAIN_DEBUG
-      'TempDebug
+    if debugFlag => MAIN_DEBUG and debugFlag < SERVO_COG_DEBUG
+      Aux.Lock
+      TempDebug
+      Aux.E
         
 PUB CheckSerial : rxcheck
       
@@ -770,12 +777,14 @@ PRI UpdateActive(changeAmount)
       halfInterval := clkfreq / controlFrequency / 2
     elseif activeParTxtPtr == @kProportionalTxt 
       long[activeParameter + 4] += changeAmount ' adjust right also
+    elseif activeParTxtPtr == @rangesToSample
+      rangesToSample := 0 #> rangesToSample <# MAX_LASER_SAMPLES
     inputIndex--
     controlSerial := NO_ACTIVE_CONTROL_SERIAL
     lastComTime := cnt
-
+                  
 PRI TempDebug
-    
+ 
   Aux.Tx(DEBUG_AUX, 11)
   Aux.Tx(DEBUG_AUX, 1) ' home
   Aux.Str(DEBUG_AUX, string(11, 13, "CleaverSlave"))
@@ -1213,9 +1222,14 @@ PRI ParseAZ | index, parameter[3]
     parameter := ParseDec(NextParameter)
     CheckLastParameter
     debugFlag := parameter
-  elseif strcomp(@InputBuffer, string("PING"))          ' Command: Respond with status of active PING))) sensors
+  elseif strcomp(@InputBuffer, string("LS")) ' laser samples       
+    parameter[0] := ParseDec(NextParameter)
     CheckLastParameter
-          
+    rangesToSample := parameter[0]
+    activeParameter := @rangesToSample
+    activeParTxtPtr := @rangesToSampleTxt
+  elseif strcomp(@InputBuffer, string("PING"))          ' Command: Respond with status of active PING))) sensors
+    CheckLastParameter          
     repeat index from 0 to maxPingIndex
       OutputDec(pingResults[index])
       if index < maxPingIndex                      
@@ -1486,12 +1500,13 @@ PUB Say(messageId, value)
 
   result := Aux.Rx(EMIC_AUX)
        }
-PRI ServoControl | nextCnt
+PRI ServoControl | nextCnt, extremeIndex
 
-
-  
-  Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
-  I2c.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
+  Leds.init(Header#SEVEN_SEGMENT_LATCH, Header#SEVEN_SEGMENT_DATA, {
+  } Header#SEVEN_SEGMENT_CLOCK, Header#SEVEN_SEGMENTS_IN_USE, sevenSegmentBrightness)
+    
+  'Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
+  'I2c.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
   
   nextCnt := cnt + controlInterval
   if debugFlag => SERVO_COG_DEBUG
@@ -1513,11 +1528,14 @@ PRI ServoControl | nextCnt
         if debugFlag => SERVO_COG_DEBUG
           DisplayCalData(@scanZRangeMin, @scanZMin, @scanZMax, @scanZRange, @scanZAve)
           'scanZAveScan  
-        result := WaitForC(20 + TILT_CAL_POINTS)
+        result := WaitForC(30 + TILT_CAL_POINTS)
         if result == 0
-          TargetExtreme(2)
-          WaitForC(20 + TILT_CAL_POINTS)
-          
+          extremeIndex := TargetExtreme(2)
+          WaitForCWhileScanning(20 + TILT_CAL_POINTS, extremeIndex)
+          outa[Header#RED_LASER_TOP] := 0
+          outa[Header#RED_LASER_BOTTOM] := 0
+          dira[Header#RED_LASER_TOP] := 0
+          dira[Header#RED_LASER_BOTTOM] := 0
       NEW_CAL:
         NewCalibration
         
@@ -1669,14 +1687,14 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
       MoveServosQuietly(@targetPosition, moveCycles[0])
       QuietTiltServo
       'laserDistance := GetLaserRange
-      laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
+      laserDistance := GetLaserRangeMedian(@medianBuffer, rangesToSample)
       
       if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
         Aux.Stre(DEBUG_AUX, @rawLaserInput) 
       
       if laserDistance <> Header#INVALID_LASER_READING
-        CalculateLaserPosition(laserDistance, @laserTargetX)
+        CalculateLaserPosition(laserDistance, servoPosition[2], servoPosition[3], @laserTargetX)
         validReadingsThisTilt++
         if validReadingsThisTilt == 1
           calibrationZMin[tiltIndex] := laserTargetZ
@@ -1830,13 +1848,13 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
       MoveServosQuietly(@targetPosition, moveCycles[0])
       QuietTiltServo
       'laserDistance := GetLaserRange
-      laserDistance := GetLaserRangeMedian(@medianBuffer, MEDIAN_BUFFER)
+      laserDistance := GetLaserRangeMedian(@medianBuffer, rangesToSample)
       if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
         Aux.Stre(DEBUG_AUX, @rawLaserInput) 
       'correctedZ := laserTargetZ - calibrationZBuffer[bufferIndex]
       if laserDistance <> Header#INVALID_LASER_READING
-        CalculateLaserPosition(laserDistance, @laserTargetX)
+        CalculateLaserPosition(laserDistance, servoPosition[2], servoPosition[3], @laserTargetX)
         correctedZ := laserTargetZ - calibrationZBuffer[bufferIndex]
         validReadingsThisTilt++
         validReadingsThisScan++
@@ -1968,7 +1986,7 @@ PRI ChooseToSaveLow
       Aux.Tx(DEBUG_AUX, 0)
       Aux.Tx(DEBUG_AUX, 20 + TILT_CAL_POINTS)
       Aux.Stre(DEBUG_AUX, string(11, 13, "Press C button to save this calibration."))
-      GetNunchuckData
+      'GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
         ledMessage[0] := 0
@@ -2001,7 +2019,7 @@ PRI ChooseToBackupLow
     if debugFlag => SERVO_COG_MENU_DEBUG
       Aux.Strs(DEBUG_AUX, string(11, 13, "Press C button to backup this calibration."))
       Aux.Stre(DEBUG_AUX, string(11, 13, "Press Z button to not backup this calibration."))
-      GetNunchuckData
+      'GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
         ledMessage[0] := 0
@@ -2014,15 +2032,15 @@ PRI ChooseToBackupLow
   else
     result := 0 }
     
-PUB WaitForC(row)
+PUB WaitForC(debugRow)
 
   repeat 
     if debugFlag => SERVO_COG_MENU_DEBUG
       Aux.Txs(DEBUG_AUX, 2)
       Aux.Tx(DEBUG_AUX, 0)
-      Aux.Tx(DEBUG_AUX, row)
+      Aux.Tx(DEBUG_AUX, debugRow)
       Aux.Stre(DEBUG_AUX, string(11, 13, "Press button to continue."))
-      GetNunchuckData
+      'GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
         'ledMessage[0] := 0
@@ -2031,6 +2049,71 @@ PUB WaitForC(row)
       'ledMessage[0] := 0
   while nunchuckButton == Header#NUNCHUCK_BUTTON_NONE
       
+PUB WaitForCWhileScanning(debugRow, extremeIndex) | extremePan, extremeTilt, extremeZ
+
+  outa[Header#RED_LASER_TOP] := 1
+  outa[Header#RED_LASER_BOTTOM] := 1
+  dira[Header#RED_LASER_TOP] := 1
+  dira[Header#RED_LASER_BOTTOM] := 1
+
+  repeat
+    laserDistance := GetLaserRangeMedian(@medianBuffer, rangesToSample)
+    outa[Header#RED_LASER_TOP] := 1
+    outa[Header#RED_LASER_BOTTOM] := 1
+    dira[Header#RED_LASER_TOP] := 1
+    dira[Header#RED_LASER_BOTTOM] := 1
+
+    if scanZMinIndex == extremeIndex
+      extremePan := scanZMinPan
+      extremeTilt := scanZMinTilt
+      extremeZ := scanZAbsMin
+    else
+      extremePan := scanZMaxPan
+      extremeTilt := scanZMaxTilt
+      extremeZ := scanZAbsMax
+      
+    CalculateLaserPosition(laserDistance, extremePan, extremeTilt, @laserTargetX)
+    correctedZ := laserTargetZ - calibrationZBuffer[extremeIndex]
+    LedDebugScan
+    if debugFlag => SERVO_COG_MENU_DEBUG
+      Aux.Txs(DEBUG_AUX, 2)
+      Aux.Tx(DEBUG_AUX, 0)
+      Aux.Tx(DEBUG_AUX, debugRow)
+      Aux.Str(DEBUG_AUX, string(11, 13, "Press button to continue."))
+      Aux.Str(DEBUG_AUX, string(11, 13, "extremeIndex = "))
+      Aux.Dec(DEBUG_AUX, extremeIndex)
+    
+      Aux.Str(DEBUG_AUX, string(11, 13, "F_LASER_HEIGHT = "))
+      Aux.Dec(DEBUG_AUX, F32.FRound(Header#F_LASER_HEIGHT))
+      Aux.Str(DEBUG_AUX, string(11, 13, "Calculated XYZ = "))
+      Aux.Dec(DEBUG_AUX, laserTargetX)
+      Aux.Str(DEBUG_AUX, string(", "))
+      Aux.Dec(DEBUG_AUX, laserTargetY)
+      Aux.Str(DEBUG_AUX, string(", "))
+      Aux.Dec(DEBUG_AUX, laserTargetZ)
+       
+      Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
+      Aux.Dec(DEBUG_AUX, panDegrees10)
+      Aux.Str(DEBUG_AUX, string(" degrees "))
+      Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
+      Aux.Dec(DEBUG_AUX, tiltDegrees10)
+      Aux.Stre(DEBUG_AUX, string(" degrees "))
+    
+      'GetNunchuckData
+    if nunchuckButton == Header#NUNCHUCK_BUTTON_C
+      result := 1
+      'ledMessage[0] := 0
+    elseif nunchuckButton == Header#NUNCHUCK_BUTTON_Z
+      result := 0
+      'ledMessage[0] := 0
+  while nunchuckButton == Header#NUNCHUCK_BUTTON_NONE
+      
+
+  outa[Header#RED_LASER_TOP] := 0
+  outa[Header#RED_LASER_BOTTOM] := 0
+  dira[Header#RED_LASER_TOP] := 0
+  dira[Header#RED_LASER_BOTTOM] := 0
+
 PRI ChooseWhichCal
 
   ReadEEPROM(@calibrationVersion, @calibrationVersion + (LONGS_OF_CAL_DATA * 4) - 1, {
@@ -2055,7 +2138,7 @@ PRI ChooseWhichCal
     if debugFlag => SERVO_COG_MENU_DEBUG
       Aux.Strs(DEBUG_AUX, string(11, 13, "Press C button to keep new calibration."))
       Aux.Stre(DEBUG_AUX, string(11, 13, "Press Z button to keep old calibration."))
-      GetNunchuckData
+      'GetNunchuckData
       if nunchuckButton == Header#NUNCHUCK_BUTTON_C
         result := 1
         ledMessage[0] := 0
@@ -2073,7 +2156,7 @@ PRI ClearLowCal
   calibrationVersion := 0
   WriteEEPROM(@calibrationVersion, @calibrationVersion + 3, @calibrationVersion)
   
-PRI TargetExtreme(extremeType) | extremeIndex, extremePan, extremeTilt, extremeTxt, target[6]
+PRI TargetExtreme(extremeType) : extremeIndex | extremeZ, extremePan, extremeTilt, extremeTxt, target[6]
 
   case extremeType
     2:
@@ -2088,18 +2171,18 @@ PRI TargetExtreme(extremeType) | extremeIndex, extremePan, extremeTilt, extremeT
       extremePan := scanZMinPan
       extremeTilt := scanZMinTilt
       extremeTxt := string("in")
-      result := scanZAbsMin
+      extremeZ := scanZAbsMin
     1:
       extremeIndex := scanZMaxIndex
       extremePan := scanZMaxPan
       extremeTilt := scanZMaxTilt
       extremeTxt := string("ax")
-      result := scanZAbsMax  
+      extremeZ := scanZAbsMax  
   if debugFlag => SERVO_COG_MENU_DEBUG
     Aux.Strs(DEBUG_AUX, string(11, 13, "Extreme M"))
     Aux.Str(DEBUG_AUX, extremeTxt)
     Aux.Str(DEBUG_AUX, string("imum = "))
-    Aux.Dec(DEBUG_AUX, result)
+    Aux.Dec(DEBUG_AUX, extremeZ)
     Aux.Str(DEBUG_AUX, string(", # "))
     Aux.Dec(DEBUG_AUX, extremeIndex)
     Aux.Str(DEBUG_AUX, string(", pan = "))
@@ -2112,6 +2195,11 @@ PRI TargetExtreme(extremeType) | extremeIndex, extremePan, extremeTilt, extremeT
   target[3] := extremeTilt
   
   MoveServosQuietly(@target, 50)
+  outa[Header#RED_LASER_TOP] := 1
+  outa[Header#RED_LASER_BOTTOM] := 1
+  dira[Header#RED_LASER_TOP] := 1
+  dira[Header#RED_LASER_BOTTOM] := 1
+  
           
 PRI MoveServos(targetPtr, moveCycles) | initialPosition[6], {
 } pseudoSlope[6], nextCnt
@@ -2155,11 +2243,29 @@ PRI QuietTiltServo
   
 PUB SimpleDebug(buffer0, buffer1)
 
-  GetNunchuckData
+  'GetNunchuckData
   'Aux.Rx(DEBUG_AUX)
   menuSelect := nunchuckButton
   Aux.Tx(DEBUG_AUX, 11)
-  Aux.Tx(DEBUG_AUX, 1)  
+  Aux.Tx(DEBUG_AUX, 1)
+  
+  Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck = "))
+  Aux.Dec(DEBUG_AUX, rightX)
+  Aux.Str(DEBUG_AUX, string(", "))
+  Aux.Dec(DEBUG_AUX, rightY)
+  Aux.Str(DEBUG_AUX, string(" & "))
+  Aux.Dec(DEBUG_AUX, nunchuckAcceleration[0])
+  Aux.Str(DEBUG_AUX, string(", "))
+  Aux.Dec(DEBUG_AUX, nunchuckAcceleration[1])
+  Aux.Str(DEBUG_AUX, string(", "))
+  Aux.Dec(DEBUG_AUX, nunchuckAcceleration[2])
+  Aux.Str(DEBUG_AUX, string(" : ButtonsZC = "))
+  Aux.Dec(DEBUG_AUX, nunchuckButton)
+  Aux.Str(DEBUG_AUX, string(11, 13, "joy = "))
+  Aux.Dec(DEBUG_AUX, joyX)
+  Aux.Str(DEBUG_AUX, string(", "))
+  Aux.Dec(DEBUG_AUX, joyY)
+  
   if laserDistance == Header#INVALID_LASER_READING
     Aux.Str(DEBUG_AUX, string(11, 13, "Laser Data Invalid"))
     return
@@ -2462,13 +2568,16 @@ PUB GetLaserRangeMedian(bufferPtr, readings) | maxIndex
     
 PUB GetLaserRange | inputcharacter, rawInputIndex, validFlag
 
+  outa[Header#RED_LASER_TOP] := 1
+  dira[Header#RED_LASER_TOP] := 1
+  
   result := Aux.rxHowFull(SR02_AUX)
   if result > 1
     Aux.Strs(DEBUG_AUX, string(11, 13, "****** Flushing at least "))
     Aux.Dec(DEBUG_AUX, result)
     Aux.Stre(DEBUG_AUX, string(" bytes from rx buffer. ******")) 
     Aux.rxflush(SR02_AUX)
- 
+   
   rawInputIndex := 0
   Aux.Tx(SR02_AUX, "D")
   validFlag := 0
@@ -2479,7 +2588,7 @@ PUB GetLaserRange | inputcharacter, rawInputIndex, validFlag
     if inputcharacter <> -1
       rawLaserInput[rawInputIndex++] := inputcharacter
 
-    if rawInputIndex > MAX_LASER_BUFFER_INDEX
+    if rawInputIndex => RAW_LASER_BUFFER_SIZE
       error := string("buffer overflow")
       validFlag := 0
       quit
@@ -2489,7 +2598,9 @@ PUB GetLaserRange | inputcharacter, rawInputIndex, validFlag
         validFlag := 1
   until inputcharacter == 13 or inputcharacter == -1
   rawLaserInput[rawInputIndex] := 0
-
+  outa[Header#RED_LASER_TOP] := 0
+  dira[Header#RED_LASER_TOP] := 0
+  
   if validFlag == 0
     result := Header#INVALID_LASER_READING
 
@@ -2509,48 +2620,52 @@ PUB LongMedian(arrayAddress, elements) | halfTheElements, toCompareIndex, {
     if elementsSmaller =< halfTheElements and elementsLarger =< halfTheElements
       return long[arrayAddress][toCompareIndex]
 
-PUB CalculateLaserPosition(distance, resultPointer) | servoAverages[2], gndD
+PUB CalculateLaserPosition(distance, panPos, tiltPos, resultPointer) | gndD
+' Debug lock should be set prior to calling this method.
+' NED coordinate system. Down is positive so objects above ground level
+' will have negative Z values.
 
-  'Aux.Str(DEBUG_AUX, string(11, 13, "CalculateLaserPosition, distance  = "))
-  'Aux.Dec(DEBUG_AUX, distance)
-  'Aux.Str(DEBUG_AUX, string(" cm"))   
-  repeat result from 0 to 1
-    servoAverages[result] := (laserServos[result] + laserServos[result + 2]) / 2
-
-  {servoAverages[0] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(MIDDLE_PAN_CENTER - {
-  } servoAverages[0]))
-  servoAverages[1] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(servoAverages[1] - {
-  } MIDDLE_TILT_DOWN))
-  }
-  servoAverages[0] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(MIDDLE_PAN_CENTER - {
-  } servoAverages[0]))
-  servoAverages[1] := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(servoAverages[1] - {
+  if debugFlag => LASER_CALC_DEBUG
+    Aux.Str(DEBUG_AUX, string(11, 13, "CalculateLaserPosition, distance  = "))
+    Aux.Dec(DEBUG_AUX, distance)
+    Aux.Str(DEBUG_AUX, string(" cm"))   
+    Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
+    Aux.Dec(DEBUG_AUX, panPos)
+    Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
+    Aux.Dec(DEBUG_AUX, tiltPos)
+  panPos := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(MIDDLE_PAN_CENTER - {
+  } panPos))
+  tiltPos := F32.FMul(Header#F_RADIAN_PER_US, F32.FFloat(tiltPos - {
   } MIDDLE_TILT_HORIZONTAL))
   
   distance := F32.FFloat(distance * 10)
-  gndD := F32.FMul(distance, F32.Cos(servoAverages[1]))
+  gndD := F32.FMul(distance, F32.Cos(tiltPos))
   {long[resultPointer][Z_DIMENSION] := F32.FRound(F32.FSub(Header#F_LASER_HEIGHT, F32.FMul(distance, {
   } F32.Sin(servoAverages[1]))))}
   long[resultPointer][Z_DIMENSION] := F32.FRound(F32.FSub(Header#F_LASER_HEIGHT, F32.FMul(distance, {
-  } F32.Sin(servoAverages[1]))))
-  long[resultPointer][X_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Cos(servoAverages[0])))
-  long[resultPointer][Y_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Sin(servoAverages[0])))
+  } F32.Sin(tiltPos))))
+  long[resultPointer][X_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Cos(panPos)))
+  long[resultPointer][Y_DIMENSION] := F32.FRound(F32.FMul(distance, F32.Sin(panPos)))
 
-  panDegrees10 := F32.FRound(F32.FMul(F32.Degrees(servoAverages[0]), 10.0))
-  tiltDegrees10 := F32.FRound(F32.FMul(F32.Degrees(servoAverages[1]), 10.0))
-  {if debugFlag 
+  panDegrees10 := F32.FRound(F32.FMul(F32.Degrees(panPos), 10.0))
+  tiltDegrees10 := F32.FRound(F32.FMul(F32.Degrees(tiltPos), 10.0))
+  if debugFlag => LASER_CALC_DEBUG
+    Aux.Str(DEBUG_AUX, string(11, 13, "F_LASER_HEIGHT = "))
+    Aux.Dec(DEBUG_AUX, F32.FRound(Header#F_LASER_HEIGHT))
+    Aux.Str(DEBUG_AUX, string(11, 13, "Calculated XYZ = "))
+    Aux.Dec(DEBUG_AUX, long[resultPointer][X_DIMENSION])
+    Aux.Str(DEBUG_AUX, string(", "))
+    Aux.Dec(DEBUG_AUX, long[resultPointer][Y_DIMENSION])
+    Aux.Str(DEBUG_AUX, string(", "))
+    Aux.Dec(DEBUG_AUX, long[resultPointer][Z_DIMENSION])
+
     Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
-    Aux.Dec(DEBUG_AUX, laserServos[0])
-    Aux.Str(DEBUG_AUX, string(" & "))
-    Aux.Dec(DEBUG_AUX, laserServos[2])
-    Aux.Str(DEBUG_AUX, string(", ave = "))
-    Aux.Dec(DEBUG_AUX, (laserServos[0] + laserServos[2]) / 2)
+    Aux.Dec(DEBUG_AUX, panDegrees10)
+    Aux.Str(DEBUG_AUX, string(" degrees "))
     Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Tilt = "))
-    Aux.Dec(DEBUG_AUX, laserServos[1])
-    Aux.Str(DEBUG_AUX, string(" & "))
-    Aux.Dec(DEBUG_AUX, laserServos[3])
-    Aux.Str(DEBUG_AUX, string(", ave = "))
-    Aux.Dec(DEBUG_AUX, (laserServos[1] + laserServos[3]) / 2)  }
+    Aux.Dec(DEBUG_AUX, tiltDegrees10)
+    Aux.Str(DEBUG_AUX, string(" degrees "))
+    
   
 PUB GetPing(numberOfSensors, pointer)
 '' Is this method really needed?
@@ -2575,7 +2690,8 @@ PUB DivideWithRound(numerator, denominator)
 PUB GetNunchuckData | localMax, localParameter[2], pointer
 '' Called by debug cog
 '' Nunchuck's coordinate system is different from robot's.
-'' 
+' Debug lock should be set prior to calling this method.
+ 
   if nunchuckReceiverConnectedFlag == 0
     CheckForNunchuck
     if nunchuckReceiverConnectedFlag == 0
@@ -2606,7 +2722,7 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
     
   'DisplayTwoDataPoints(rightX * MAX_LED_INDEX / 255, GREEN, rightY * MAX_LED_INDEX / 255, RED, OFF)
   
-  Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck = "))
+  {Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck = "))
   Aux.Dec(DEBUG_AUX, rightX)
   Aux.Str(DEBUG_AUX, string(", "))
   Aux.Dec(DEBUG_AUX, rightY)
@@ -2617,7 +2733,7 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
   Aux.Str(DEBUG_AUX, string(", "))
   Aux.Dec(DEBUG_AUX, nunchuckAcceleration[2])
   Aux.Str(DEBUG_AUX, string(" : ButtonsZC = "))
-  Aux.Dec(DEBUG_AUX, nunchuckButton)
+  Aux.Dec(DEBUG_AUX, nunchuckButton) }
  
   if nunchuckButton <> previousButton and previousButton == Header#NUNCHUCK_BUTTON_NONE
     case nunchuckButton
@@ -2663,10 +2779,10 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
   localParameter[RIGHT_MOTOR] := joyY - joyX     }
     
  
-  Aux.Str(DEBUG_AUX, string(11, 13, "joy = "))
+  {Aux.Str(DEBUG_AUX, string(11, 13, "joy = "))
   Aux.Dec(DEBUG_AUX, joyX)
   Aux.Str(DEBUG_AUX, string(", "))
-  Aux.Dec(DEBUG_AUX, joyY)
+  Aux.Dec(DEBUG_AUX, joyY) }
 
   {Aux.Str(DEBUG_AUX, string(", localParameter = "))
   Aux.Dec(DEBUG_AUX, localParameter[LEFT_MOTOR])
@@ -2688,6 +2804,7 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
   longmove(pointer, @localParameter, 2)
           }
 PUB CheckForNunchuck
+' Debug lock should be set prior to calling this method.
 
   Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
   Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck ID = ", QUOTE))   
@@ -2820,6 +2937,7 @@ targetPowerRTxt                 byte "targetPower[RIGHT]", 0
 targetSpeedLTxt                 byte "targetSpeed[LEFT]", 0
 targetSpeedRTxt                 byte "targetSpeed[RIGHT]", 0
 controlFrequencyTxt             byte "controlFrequency", 0
+rangesToSampleTxt               byte "rangesToSample", 0
 
 DAT introEmic                   byte "Robot Cleaver Ready", 0
                                 byte "Communication With Propeller Enabled", 0
