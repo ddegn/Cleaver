@@ -168,9 +168,11 @@ CON
   SERVO_PIN_4 = SERVO_PIN_3 + 1
   SERVO_PIN_5 = SERVO_PIN_4 + 1
 
-  US_PER_CYCLE = 10
-  QUIET_SERVO_BACKLASH = 40 '20
-  OVERSHOOT_CYCLES = QUIET_SERVO_BACKLASH / US_PER_CYCLE
+  US_PER_CYCLE = 5 '10
+  QUIET_SERVO_PAN = 10 '20 movement noticeable ' 40 too much
+  QUIET_SERVO_TILT = 60 'worked once but then because noisy again '40 still noisy ' 20 still noisy
+  'OVERSHOOT_CYCLES = QUIET_SERVO_BACKLASH / US_PER_CYCLE
+  APPROACH_DISTANCE = 200
   
   STARBOARD_PAN_PIN = SERVO_PIN_4
   STARBOARD_TILT_PIN = SERVO_PIN_5
@@ -253,7 +255,7 @@ CON
   TILT_CAL_MAX = MIDDLE_TILT_DOWN_45
   TILT_CAL_MIN = (MIDDLE_TILT_DOWN_45 + MIDDLE_TILT_HORIZONTAL) / 2
 
-  PAN_CAL_MAX = MIDDLE_PAN_CENTER + 250 '
+  PAN_CAL_MAX = MIDDLE_PAN_CENTER + 250 '' start cal position
   PAN_CAL_MIN = MIDDLE_PAN_CENTER - 250
 
   PAN_CAL_POINTS = 5 '10 '20
@@ -507,7 +509,7 @@ servoPhase                      long 100, 0
                                 long 400, 0
                                 long 300, 0
 
-servoCalTiltMax                 long MIDDLE_TILT_DOWN_45
+servoCalTiltMax                 long MIDDLE_TILT_DOWN_45 ' start cal position
 servoCalTiltMin                 long (MIDDLE_TILT_DOWN_45 + MIDDLE_TILT_HORIZONTAL) / 2
                                                                                                 
 controlFrequency                long DEFAULT_CONTROL_FREQUENCY
@@ -520,9 +522,9 @@ calibrationStatus               long NO_LOWER_DATA
 calibrationPanSlope             long 0-0
 calibrationTiltSlope            long 0-0
 calibrationPanMin               long PAN_CAL_MIN
-calibrationPanMax               long PAN_CAL_MAX
+calibrationPanMax               long PAN_CAL_MAX  ' move from max to min
 calibrationTiltMin              long TILT_CAL_MIN
-calibrationTiltMax              long TILT_CAL_MAX
+calibrationTiltMax              long TILT_CAL_MAX  ' move from max to min 
 calibrationPanPoints            long PAN_CAL_POINTS
 calibrationTiltPoints           long TILT_CAL_POINTS
 calibrationZRangeMin            long 0-0
@@ -543,7 +545,8 @@ previousZRange                  long 0-0[TILT_CAL_POINTS]
 previousZAve                    long 0-0[TILT_CAL_POINTS]
 rangesToSample                  long DEFAULT_LASER_SAMPLES
 'maxLaserSampleIndex             long DEFAULT_LASER_SAMPLES - 1
- 
+strainReducingAdjustment        long QUIET_SERVO_PAN, QUIET_SERVO_TILT
+
 debugFlag                       byte SERVO_COG_DEBUG 'FULL_DEBUG
                       
 mode                            byte 0                  ' Current mode of the control system
@@ -1616,7 +1619,7 @@ PUB InitilizeCalibration | targetPosition[6], panIndex, tiltIndex, {
   #0, CHECK_FOR_CAL, INITILIZE_CAL, CHOOSE_CAL, USE_CAL, NEW_CAL
 }
 PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
-} validReadingsThisTilt, forwardPanFlag, moveCycles[2]
+} validReadingsThisTilt
 '' The tilt servo starts pointing down and move up.
 '' The pan servo starts to the port side and moves back and forth.
 '' The calibration data is recorded during both directions of the
@@ -1625,73 +1628,60 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
 '' is located in memory from left to right, the points are scanned
 '' with the pan servo moving both left to right and also right to
 '' left while moving right to left, the memory locations are decreasing.
-
-
-  forwardPanFlag := true
-  'forward pan has a reduced pulse length
   
-  'bufferIndex := 0
+  bufferIndex := 0
   
   calibrationPanSlope := (calibrationPanMax - calibrationPanMin) * SCALED_MULTIPLIER / {
-  } PAN_CAL_GAPS
+  } PAN_CAL_POINTS
   calibrationTiltSlope := (calibrationTiltMax - calibrationTiltMin) * SCALED_MULTIPLIER / {
-  } TILT_CAL_GAPS 
-  moveCycles[0] := DivideWithRound(calibrationPanMax - calibrationPanMin, US_PER_CYCLE)
-  moveCycles[1] := DivideWithRound(calibrationTiltMax - calibrationTiltMin, US_PER_CYCLE)
-  
+  } TILT_CAL_POINTS 
+
+  'longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
+  'targetPosition[2] := calibrationPanMin
+  'targetPosition[3] := calibrationTiltMax
+  'Aux.Lock
+  'MoveFromLowerLeft(@targetPosition, US_PER_CYCLE)
+  'Aux.E
   longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
-  targetPosition[2] := calibrationPanMin
-  targetPosition[3] := calibrationTiltMax
-  
-  MoveServosQuietly(@targetPosition, 100)
   
   repeat tiltIndex from 0 to TILT_CAL_GAPS
     targetPosition[3] := calibrationTiltMax - (tiltIndex * calibrationTiltSlope / {
     } SCALED_MULTIPLIER)
-    MoveServosQuietly(@targetPosition, moveCycles[1])
+    'Aux.Lock
+    'MoveFromLowerLeft(@targetPosition, US_PER_CYCLE)
+    'Aux.E
+    'longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
     validReadingsThisTilt := 0
     calibrationZAve[tiltIndex] := 0
-    if forwardPanFlag
-      bufferIndex := (tiltIndex * PAN_CAL_POINTS) - 1
-      if debugFlag => SERVO_COG_DEBUG
-        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag true , bufferIndex = "))
-      
-    else
-      bufferIndex := (tiltIndex + 1) * PAN_CAL_POINTS
-      if debugFlag => SERVO_COG_DEBUG
-        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
-    if debugFlag => SERVO_COG_DEBUG
+
+    'bufferIndex := (tiltIndex * PAN_CAL_POINTS) - 1
+    {if debugFlag => SERVO_COG_DEBUG
+      Aux.Strs(DEBUG_AUX, string(11, 13, "bufferIndex = "))
       Aux.Dec(DEBUG_AUX, bufferIndex)
       Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-      Aux.Dece(DEBUG_AUX, tiltIndex)    
+      Aux.Dece(DEBUG_AUX, tiltIndex)}    
     repeat panIndex from 0 to PAN_CAL_GAPS
-      if forwardPanFlag
-        targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
-        } SCALED_MULTIPLIER)
-        bufferIndex++
-        
-      else
-        targetPosition[2] := calibrationPanMin + (panIndex * calibrationPanSlope / {
-        } SCALED_MULTIPLIER)
-        bufferIndex--
-      if debugFlag => SERVO_COG_DEBUG
+      targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
+      } SCALED_MULTIPLIER)
+      
+ 
+      {if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
         Aux.Dec(DEBUG_AUX, bufferIndex)
         Aux.Str(DEBUG_AUX, string(", panIndex = ")) 
         Aux.Dec(DEBUG_AUX, panIndex)
         Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-        Aux.Dec(DEBUG_AUX, tiltIndex)
-        Aux.Str(DEBUG_AUX, string(", forwardPanFlag = ")) 
-        Aux.Dece(DEBUG_AUX, forwardPanFlag)
-      
-      MoveServosQuietly(@targetPosition, moveCycles[0])
-      QuietTiltServo
+        Aux.Dece(DEBUG_AUX, tiltIndex)}
+      'Aux.Lock   
+      MoveFromLowerLeft(@targetPosition, US_PER_CYCLE)
+      'Aux.E
+      longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
       'laserDistance := GetLaserRange
       laserDistance := GetLaserRangeMedian(@medianBuffer, rangesToSample)
       
-      if debugFlag => SERVO_COG_DEBUG
+      {if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
-        Aux.Stre(DEBUG_AUX, @rawLaserInput) 
+        Aux.Stre(DEBUG_AUX, @rawLaserInput) }
       
       if laserDistance <> Header#INVALID_LASER_READING
         CalculateLaserPosition(laserDistance, servoPosition[2], servoPosition[3], @laserTargetX)
@@ -1710,7 +1700,7 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
           Aux.Strs(DEBUG_AUX, string(7, 11, 13, 7, "********* Invalid rawLaserInput = ")) 
           Aux.Str(DEBUG_AUX, @rawLaserInput)
           Aux.Stre(DEBUG_AUX, string(7, 7, " **********", 7, 7))
-      if debugFlag => SERVO_COG_DEBUG
+      {if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
         Aux.Dec(DEBUG_AUX, laserDistance)    
         Aux.Str(DEBUG_AUX, string(", laserTargetZ = ")) 
@@ -1724,16 +1714,17 @@ PRI Calibration | targetPosition[6], panIndex, tiltIndex, {
         Aux.Str(DEBUG_AUX, string(11, 13, "calibrationZRangeMin = ")) 
         Aux.Dec(DEBUG_AUX, calibrationZRangeMin)
         Aux.Str(DEBUG_AUX, string(", calibrationZRangeMax = ")) 
-        Aux.Dece(DEBUG_AUX, calibrationZRangeMax)
+        Aux.Dece(DEBUG_AUX, calibrationZRangeMax)}
       calibrationDBuffer[bufferIndex] := laserDistance
       calibrationZBuffer[bufferIndex] := laserTargetZ
+      bufferIndex++
       if debugFlag => SERVO_COG_MENU_DEBUG
         LedDebugCal
       if debugFlag => SERVO_COG_DEBUG
         Aux.Lock
         SimpleDebug(@calibrationDBuffer, @calibrationZBuffer)
         Aux.E
-    !forwardPanFlag
+
     calibrationZRange[tiltIndex] := calibrationZMax[tiltIndex] - calibrationZMin[tiltIndex]
     calibrationZAve[tiltIndex] /= validReadingsThisTilt
     if tiltIndex == 0
@@ -1770,11 +1761,9 @@ PRI NewCalibration
   Calibration
   DisplayCalComparison
   calibrationState := CHOOSE_CAL 'calibrationStatus := NEW_LOW_OLD_HIGH_CAL_DATA
-    
-  'rangeZ, previousTargetZ
-  'ChooseWhichCal
+
 PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
-} validReadingsThisTilt, forwardPanFlag, moveCycles[2]
+} validReadingsThisTilt
 '' The tilt servo starts pointing down and move up.
 '' The pan servo starts to the port side and moves back and forth.
 '' The calibration data is recorded during both directions of the
@@ -1785,73 +1774,59 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
 '' left while moving right to left, the memory locations are decreasing.
 
 
-  forwardPanFlag := true
   validReadingsThisScan := 0
   'forward pan has a reduced pulse length
   
-  'bufferIndex := 0
+  bufferIndex := 0
   
   {calibrationPanSlope := (calibrationPanMax - calibrationPanMin) * SCALED_MULTIPLIER / {
-  } PAN_CAL_GAPS
+  } PAN_CAL_POINTS
   calibrationTiltSlope := (calibrationTiltMax - calibrationTiltMin) * SCALED_MULTIPLIER / {
-  } TILT_CAL_GAPS    }
-  moveCycles[0] := DivideWithRound(calibrationPanMax - calibrationPanMin, US_PER_CYCLE)
-  moveCycles[1] := DivideWithRound(calibrationTiltMax - calibrationTiltMin, US_PER_CYCLE)
+  } TILT_CAL_POINTS    }
   
+  'longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
+  'targetPosition[2] := calibrationPanMin
+  'targetPosition[3] := calibrationTiltMax
+  'Aux.Lock
+  'MoveFromLowerLeft(@targetPosition, US_PER_CYCLE)
+  'Aux.E
   longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
-  targetPosition[2] := calibrationPanMin
-  targetPosition[3] := calibrationTiltMax
-  
-  MoveServosQuietly(@targetPosition, 100)
   scanZAveScan := 0
   repeat tiltIndex from 0 to TILT_CAL_GAPS
     targetPosition[3] := calibrationTiltMax - (tiltIndex * calibrationTiltSlope / {
     } SCALED_MULTIPLIER)
-    MoveServosQuietly(@targetPosition, moveCycles[1])
+    'Aux.Lock
+    'MoveFromLowerLeft(@targetPosition, US_PER_CYCLE)
+    'Aux.E
+    'longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
     validReadingsThisTilt := 0
-    'calibrationZAve[tiltIndex] := 0
     scanZAve[tiltIndex] := 0
-    if forwardPanFlag
-      bufferIndex := (tiltIndex * PAN_CAL_POINTS) - 1
-      if debugFlag => SERVO_COG_DEBUG
-        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag true , bufferIndex = "))
-      
-    else
-      bufferIndex := (tiltIndex + 1) * PAN_CAL_POINTS
-      if debugFlag => SERVO_COG_DEBUG
-        Aux.Strs(DEBUG_AUX, string(11, 13, "forwardPanFlag false, bufferIndex = ")) 
-    if debugFlag => SERVO_COG_DEBUG
+    {if debugFlag => SERVO_COG_DEBUG
+      Aux.Strs(DEBUG_AUX, string(11, 13, "bufferIndex = "))
       Aux.Dec(DEBUG_AUX, bufferIndex)
       Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-      Aux.Dece(DEBUG_AUX, tiltIndex)    
+      Aux.Dece(DEBUG_AUX, tiltIndex)   } 
     repeat panIndex from 0 to PAN_CAL_GAPS
-      if forwardPanFlag
-        targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
-        } SCALED_MULTIPLIER)
-        bufferIndex++
-        
-      else
-        targetPosition[2] := calibrationPanMin + (panIndex * calibrationPanSlope / {
-        } SCALED_MULTIPLIER)
-        bufferIndex--
+      targetPosition[2] := calibrationPanMax - (panIndex * calibrationPanSlope / {
+      } SCALED_MULTIPLIER)
 
-      if debugFlag => SERVO_COG_DEBUG
+      {if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "bufferIndex = ")) 
         Aux.Dec(DEBUG_AUX, bufferIndex)
         Aux.Str(DEBUG_AUX, string(", panIndex = ")) 
         Aux.Dec(DEBUG_AUX, panIndex)
         Aux.Str(DEBUG_AUX, string(", tiltIndex = ")) 
-        Aux.Dec(DEBUG_AUX, tiltIndex)
-        Aux.Str(DEBUG_AUX, string(", forwardPanFlag = ")) 
-        Aux.Dece(DEBUG_AUX, forwardPanFlag)
-      
-      MoveServosQuietly(@targetPosition, moveCycles[0])
-      QuietTiltServo
+        Aux.Dece(DEBUG_AUX, tiltIndex) }
+      'Aux.Lock
+      MoveFromLowerLeft(@targetPosition, US_PER_CYCLE)
+      'Aux.E
+      longmove(@targetPosition, @servoPosition, Header#SERVOS_IN_USE)
+      'QuietTiltServo
       'laserDistance := GetLaserRange
       laserDistance := GetLaserRangeMedian(@medianBuffer, rangesToSample)
-      if debugFlag => SERVO_COG_DEBUG
+      {if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "rawLaserInput = ")) 
-        Aux.Stre(DEBUG_AUX, @rawLaserInput) 
+        Aux.Stre(DEBUG_AUX, @rawLaserInput)} 
       'correctedZ := laserTargetZ - calibrationZBuffer[bufferIndex]
       if laserDistance <> Header#INVALID_LASER_READING
         CalculateLaserPosition(laserDistance, servoPosition[2], servoPosition[3], @laserTargetX)
@@ -1889,7 +1864,7 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
       else
         laserTargetZ := Header#INVALID_LASER_READING
         correctedZ := Header#INVALID_LASER_READING
-      if debugFlag => SERVO_COG_DEBUG
+      {if debugFlag => SERVO_COG_DEBUG
         Aux.Strs(DEBUG_AUX, string(11, 13, "laserDistance = ")) 
         Aux.Dec(DEBUG_AUX, laserDistance)    
         Aux.Str(DEBUG_AUX, string(", laserTargetZ = ")) 
@@ -1907,20 +1882,19 @@ PRI Scan | targetPosition[6], panIndex, tiltIndex, validReadingsThisScan, {
         Aux.Str(DEBUG_AUX, string(11, 13, "scanZRangeMin = ")) 
         Aux.Dec(DEBUG_AUX, scanZRangeMin)
         Aux.Str(DEBUG_AUX, string(", scanZRangeMax = ")) 
-        Aux.Dece(DEBUG_AUX, scanZRangeMax)  
+        Aux.Dece(DEBUG_AUX, scanZRangeMax) } 
       scanDistanceBuffer[bufferIndex] := laserDistance
       scanXBuffer[bufferIndex] := laserTargetX
       scanYBuffer[bufferIndex] := laserTargetY
       scanZBuffer[bufferIndex] := laserTargetZ
-      correctedZBuffer[bufferIndex] := correctedZ      
+      correctedZBuffer[bufferIndex] := correctedZ
+      bufferIndex++  
       if debugFlag => SERVO_COG_MENU_DEBUG
         LedDebugScan
       if debugFlag => SERVO_COG_DEBUG
-        'SimpleDebug(@calibrationZBuffer, @scanZBuffer)
         Aux.Lock
         SimpleDebug(@scanDistanceBuffer, @correctedZBuffer)
         Aux.E
-    !forwardPanFlag
     'calibrationZRange[tiltIndex] := calibrationZMax[tiltIndex] - calibrationZMin[tiltIndex]
     'calibrationZAve[tiltIndex] /= validReadingsThisTilt
  
@@ -2091,6 +2065,8 @@ PUB WaitForCWhileScanning(debugRow, extremeIndex) | extremePan, extremeTilt, ext
       Aux.Dec(DEBUG_AUX, laserTargetY)
       Aux.Str(DEBUG_AUX, string(", "))
       Aux.Dec(DEBUG_AUX, laserTargetZ)
+      Aux.Str(DEBUG_AUX, string(11, 13, "correctedZ = "))
+      Aux.Dec(DEBUG_AUX, correctedZ)
        
       Aux.Str(DEBUG_AUX, string(11, 13, "Laser Servos Pan  = "))
       Aux.Dec(DEBUG_AUX, panDegrees10)
@@ -2190,11 +2166,13 @@ PRI TargetExtreme(extremeType) : extremeIndex | extremeZ, extremePan, extremeTil
     Aux.Str(DEBUG_AUX, string(", tilt = "))
     Aux.Dece(DEBUG_AUX, extremeTilt)
 
-  longmove(@target, @servoPosition, 6)
+  longmove(@target, @servoPosition, Header#SERVOS_IN_USE)
   target[2] := extremePan
   target[3] := extremeTilt
-  
-  MoveServosQuietly(@target, 50)
+  'Aux.Lock
+  MoveFromLowerLeft(@target, US_PER_CYCLE)
+  'Aux.E
+  longmove(@target, @servoPosition, Header#SERVOS_IN_USE)
   outa[Header#RED_LASER_TOP] := 1
   outa[Header#RED_LASER_BOTTOM] := 1
   dira[Header#RED_LASER_TOP] := 1
@@ -2202,45 +2180,145 @@ PRI TargetExtreme(extremeType) : extremeIndex | extremeZ, extremePan, extremeTil
   
           
 PRI MoveServos(targetPtr, moveCycles) | initialPosition[6], {
-} pseudoSlope[6], nextCnt
+} pseudoSlope[6], nextCnt, positionIndex, change
 
-  
+  {Aux.Str(DEBUG_AUX, string(11, 13, "MoveServos, moveCycles = "))
+  Aux.Dec(DEBUG_AUX, moveCycles)
+  Aux.Str(DEBUG_AUX, string(11, 13, "index, current, target, pseudoSlope")) }
+  ifnot moveCycles
+    return
+    
   longmove(@initialPosition, @servoPosition, Header#SERVOS_IN_USE)
   
   repeat result from 0 to MAX_SERVO_INDEX
-    pseudoSlope[result] := (long[targetPtr][result] - initialPosition[result]) * {
-    } SCALED_MULTIPLIER / moveCycles
+    change := long[targetPtr][result] - initialPosition[result]
+    if change
+      pseudoSlope[result] := (long[targetPtr][result] - initialPosition[result]) * {
+      } SCALED_MULTIPLIER / moveCycles
+    else
+      pseudoSlope[result] := 0
+      
+    {Aux.Str(DEBUG_AUX, string(11, 13, "# "))
+    Aux.Dec(DEBUG_AUX, result)
+    Aux.Str(DEBUG_AUX, string(", "))
+    Aux.Dec(DEBUG_AUX, initialPosition[result])
+    Aux.Str(DEBUG_AUX, string(", "))
+    Aux.Dec(DEBUG_AUX, long[targetPtr][result])
+    Aux.Str(DEBUG_AUX, string(", "))
+    Aux.Dec(DEBUG_AUX, pseudoSlope[result]) }
 
+  {Aux.Str(DEBUG_AUX, string(11, 13, "index, list of planned positions:"))
+  repeat result from 0 to MAX_SERVO_INDEX
+    Aux.Str(DEBUG_AUX, string(11, 13, "# "))
+    Aux.Dec(DEBUG_AUX, result)
+    if pseudoSlope[result]}
+  moveCycles--    
   nextCnt := cnt  
-  repeat moveCycles
+  repeat positionIndex from 0 to moveCycles
     waitcnt(nextCnt += controlInterval)
     repeat result from 0 to MAX_SERVO_INDEX
-      servoPosition[result] := initialPosition[result] + {
-      } DivideWithRound(pseudoSlope[result] * result, SCALED_MULTIPLIER)
-      Servo.Set(servoPins[result], servoPosition[result])
+      if pseudoSlope[result]
+        servoPosition[result] := initialPosition[result] + {
+        } DivideWithRound(pseudoSlope[result] * positionIndex, SCALED_MULTIPLIER)
+        Servo.Set(servoPins[result], servoPosition[result])
 
-PRI MoveServosQuietly(targetPtr, moveCycles) | moveDirection[6], overshootTarget[6]
+PRI MoveServosQuietly(targetPtr, usPerCycle) | overshootTarget[6], tempMoveCycles, {
+} maxMoveCycles
 
+  maxMoveCycles := 0
+  
   repeat result from 0 to MAX_SERVO_INDEX
     if long[targetPtr][result] - servoPosition[result] > 0
-      moveDirection := 1
-      overshootTarget[result] := long[targetPtr][result] + QUIET_SERVO_BACKLASH
+      overshootTarget[result] := long[targetPtr][result] + strainReducingAdjustment[result & 1]
     elseif long[targetPtr][result] - servoPosition[result] < 0
-      moveDirection := -1
-      overshootTarget[result] := long[targetPtr][result] - QUIET_SERVO_BACKLASH
+      overshootTarget[result] := long[targetPtr][result] - strainReducingAdjustment[result & 1]
     else
-      moveDirection := 0
       overshootTarget[result] := long[targetPtr][result] 
+    tempMoveCycles := DivideWithRound(||(servoPosition[result] - overshootTarget[result]), {
+    } usPerCycle)
+    if tempMoveCycles > maxMoveCycles 
+      maxMoveCycles := tempMoveCycles
+
+  tempMoveCycles := DivideWithRound(strainReducingAdjustment[1], usPerCycle)
+      
+  MoveServos(@overshootTarget, maxMoveCycles)
+  MoveServos(targetPtr, tempMoveCycles)
+
   
-  MoveServos(@overshootTarget, moveCycles + OVERSHOOT_CYCLES)
-  MoveServos(targetPtr, OVERSHOOT_CYCLES)
+PRI MoveFromLowerLeft(targetPtr, usPerCycle) | moveDirection[6], overshootTarget[6], {
+} approachPosition[6], tempMoveCycles, changeInPosition, maxApproachCycles, {
+} tempApproachCycles, maxMoveCycles
 
-PRI QuietTiltServo
+  maxMoveCycles := 0
+  maxApproachCycles := 0
+  tempApproachCycles := 0
+  
+  repeat result from 0 to MAX_SERVO_INDEX
+    changeInPosition := long[targetPtr][result] - servoPosition[result]
+    if changeInPosition > 0 ' move down or left
+      overshootTarget[result] := long[targetPtr][result] - strainReducingAdjustment[result & 1]
+      approachPosition[result] := long[targetPtr][result] + APPROACH_DISTANCE
+      tempApproachCycles := DivideWithRound(||(approachPosition[result] - {
+      } servoPosition[result]),  usPerCycle)
+      tempMoveCycles := DivideWithRound(||(approachPosition[result] - {
+      } overshootTarget[result]),  usPerCycle)
+      {Aux.Str(DEBUG_AUX, string(11, 13, "move down or left # "))
+      Aux.Dec(DEBUG_AUX, result)
+      Aux.Str(DEBUG_AUX, string(", servoPosition ="))
+      Aux.Dec(DEBUG_AUX, servoPosition[result])
+      Aux.Str(DEBUG_AUX, string(", target ="))
+      Aux.Dec(DEBUG_AUX, long[targetPtr][result])
+      Aux.Str(DEBUG_AUX, string(", overshoot ="))
+      Aux.Dec(DEBUG_AUX, overshootTarget[result])
+      Aux.Str(DEBUG_AUX, string(", approach = "))
+      Aux.Dec(DEBUG_AUX, approachPosition[result])}
+      
+    elseif changeInPosition < 0 ' move up or right
+      overshootTarget[result] := long[targetPtr][result] - strainReducingAdjustment[result & 1]
+      tempMoveCycles := DivideWithRound(||(servoPosition[result] - overshootTarget[result]), {
+      } usPerCycle)
+      approachPosition[result] := servoPosition[result]
+      {Aux.Str(DEBUG_AUX, string(11, 13, "move up or right # "))
+      Aux.Dec(DEBUG_AUX, result) 
+      Aux.Str(DEBUG_AUX, string(", servoPosition ="))
+      Aux.Dec(DEBUG_AUX, servoPosition[result])
+      Aux.Str(DEBUG_AUX, string(", target ="))
+      Aux.Dec(DEBUG_AUX, long[targetPtr][result])
+      Aux.Str(DEBUG_AUX, string(", overshoot ="))
+      Aux.Dec(DEBUG_AUX, overshootTarget[result])
+      Aux.Str(DEBUG_AUX, string(", approach = "))
+      Aux.Dec(DEBUG_AUX, approachPosition[result])}
+    else
+      overshootTarget[result] := long[targetPtr][result]
+      approachPosition[result] := servoPosition[result]
+      tempMoveCycles := 0
+    if tempMoveCycles > maxMoveCycles 
+      maxMoveCycles := tempMoveCycles
+    if tempApproachCycles > maxApproachCycles 
+      maxApproachCycles := tempApproachCycles
 
-  Servo.Set(servoPins[3], servoPosition[3] - QUIET_SERVO_BACKLASH)
+  tempMoveCycles := DivideWithRound(strainReducingAdjustment[1], usPerCycle)
+  
+  if maxApproachCycles
+    'Aux.Str(DEBUG_AUX, string(11, 13, "move to approach maxApproachCycles = "))
+    'Aux.Dec(DEBUG_AUX, maxApproachCycles)
+    MoveServos(@approachPosition, maxApproachCycles)
+  'Aux.Rx(DEBUG_AUX)
+  {Aux.Str(DEBUG_AUX, string(11, 13, "move to overshoot maxMoveCycles = "))
+  Aux.Dec(DEBUG_AUX, maxMoveCycles)}  
+  MoveServos(@overshootTarget, maxMoveCycles)
+  'Aux.Rx(DEBUG_AUX)
+  {Aux.Str(DEBUG_AUX, string(11, 13, "move to target, target cycles = "))
+  Aux.Dec(DEBUG_AUX, tempMoveCycles)}  
+  MoveServos(targetPtr, tempMoveCycles)
+  'Aux.Rx(DEBUG_AUX)
+  
+{PRI QuietTiltServo
+
+  Servo.Set(servoPins[3], servoPosition[3] - strainReducingAdjustment[1])
   waitcnt(4 * controlInterval + cnt)
   Servo.Set(servoPins[3], servoPosition[3])
-  
+  }
 PUB SimpleDebug(buffer0, buffer1)
 
   'GetNunchuckData
