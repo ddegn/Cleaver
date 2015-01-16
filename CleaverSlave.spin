@@ -18,7 +18,7 @@ CON
   MILLISECOND = _clkfreq / 1000
   ' Settings
   BUFFER_LENGTH = 255           ' Input Buffer Length must fit within input/output 'Index' ranges (currently a byte)
-  DEFAULT_LASER_SAMPLES = 8
+  DEFAULT_LASER_SAMPLES = 4 '8
   MAX_LASER_SAMPLES = 32
   RAW_LASER_BUFFER_SIZE = 12
   'MEDIAN_BUFFER = 8
@@ -168,7 +168,7 @@ CON
   SERVO_PIN_4 = SERVO_PIN_3 + 1
   SERVO_PIN_5 = SERVO_PIN_4 + 1
 
-  US_PER_CYCLE = 5 '10
+  US_PER_CYCLE = 10 '5 
   QUIET_SERVO_PAN = 10 '20 movement noticeable ' 40 too much
   QUIET_SERVO_TILT = 60 'worked once but then because noisy again '40 still noisy ' 20 still noisy
   'OVERSHOOT_CYCLES = QUIET_SERVO_BACKLASH / US_PER_CYCLE
@@ -225,7 +225,7 @@ CON
   'ACCELERATION_MAX_PAN = 10
   'ACCELERATION_MAX_TILT = 10
 
-  CALIBRATION_VERSION = 15_01_09_3
+  CALIBRATION_VERSION = 15_01_15_0
 
   ' calibrationStatus enumerarion
   #0, NO_LOWER_DATA, NEW_LOW_NO_HIGH_CAL_DATA, NEW_LOW_OLD_HIGH_CAL_DATA, IDENTICAL_CAL_DATA, {
@@ -638,12 +638,15 @@ PUB Main
     Aux.Tx(DEBUG_AUX, 7)
 
   servoDataPtr := InitializeServos(DEFAULT_SERVO_INIT_DELAY)
-
+  Aux.Strse(DEBUG_AUX, string(11, 13, "After InitializeServos"))
   F32.Start
+  Aux.Strs(DEBUG_AUX, string(11, 13, "After F32.Start"))
   Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
   I2c.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE) ' use same I2C driver with EEPROM
   'ServoControl
+  Aux.Stre(DEBUG_AUX, string(11, 13, "After Nunchuck.Init"))
   cognew(ServoControl, @servoControlStack)   
+  Aux.Strse(DEBUG_AUX, string(11, 13, "After cognew"))
   activeParameter := @rangesToSample
   activeParTxtPtr := @rangesToSampleTxt
 
@@ -1398,19 +1401,37 @@ PRI ReadEEPROM(startAddr, endAddr, eeStart) | addr
 PRI WriteEEPROM(startAddr, endAddr, eeStart) | addr, page, eeAddr
 
   ''Copy startAddr..endAddr from main RAM to EEPROM beginning at eeStart address.
-
+  {Aux.Strs(DEBUG_AUX, string(11, 13, "WriteEEPROM($"))
+  Aux.Hex(DEBUG_AUX, startAddr, 4)
+  Aux.Str(DEBUG_AUX, string(", $"))
+  Aux.Hex(DEBUG_AUX, endAddr, 4)
+  Aux.Str(DEBUG_AUX, string(", $"))
+  Aux.Hex(DEBUG_AUX, eeStart, 4)}
   addr := startAddr                                     ' Initialize main RAM index
   eeAddr := eeStart                                     ' Initialize EEPROM index
   repeat
     page := addr +PAGE_SIZE -eeAddr // PAGE_SIZE <# endaddr +1 ' Find next EEPROM page boundary
     SetAddr(eeAddr)                                     ' Give EEPROM starting address
+    {Aux.Str(DEBUG_AUX, string(11, 13, "addr = $"))
+    Aux.Hex(DEBUG_AUX, addr, 4)
+    Aux.Str(DEBUG_AUX, string(", page = $"))
+    Aux.Hex(DEBUG_AUX, page, 4)
+    Aux.Str(DEBUG_AUX, string(", eeaddr = $"))
+    Aux.Hex(DEBUG_AUX, eeaddr, 4)
+    Aux.Str(DEBUG_AUX, string(11, 13, "writing bytes at $"))
+    }
     repeat                                              ' Bytes -> EEPROM until page boundary
+      'Aux.Hex(DEBUG_AUX, addr, 4)
+      'Aux.Str(DEBUG_AUX, string(", $"))
       SendByte(byte[addr++])
     until addr == page
     i2cstop                                             ' From 24LC256's page buffer -> EEPROM
     eeaddr := addr - startAddr + eeStart                ' Next EEPROM starting address
   until addr > endAddr                                  ' Quit when RAM index > end address
-
+  {Aux.Str(DEBUG_AUX, string(11, 13, "End of WriteEEPROM. Press any key to continue"))
+  Aux.Rx(DEBUG_AUX)
+  Aux.E }
+  
 PRI SetAddr(addr) : ackbit
 
   'Sets EEPROM internal address pointer.
@@ -2884,6 +2905,7 @@ PUB GetNunchuckData | localMax, localParameter[2], pointer
 PUB CheckForNunchuck
 ' Debug lock should be set prior to calling this method.
 
+  Aux.Str(DEBUG_AUX, string(11, 13, "CheckForNunchuck Method"))
   Nunchuck.Init(Header#WII_CLOCK_SLAVE, Header#WII_DATA_SLAVE)
   Aux.Str(DEBUG_AUX, string(11, 13, "Nunchuck ID = ", QUOTE))   
   SafeDebug(nuchuckIdPtr, 4)
